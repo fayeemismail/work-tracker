@@ -15,6 +15,7 @@ export interface WorkoutExercise {
   exercise: string;
   sets: number;
   completed: boolean;
+  completedSets: boolean[]; // Array representing completion state of each individual set
   updatedAt: string;
 }
 

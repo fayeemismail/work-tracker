@@ -9,6 +9,11 @@ import {
   query,
   where,
   increment,
+  deleteDoc,
+  addDoc,
+  clearIndexedDbPersistence,
+  getDocsFromServer,
+  getDocFromServer,
 } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
 import { UserProfile, WorkoutExercise } from "@/types";
@@ -72,6 +77,7 @@ function getLocalWorkouts(userId: string): WorkoutExercise[] {
       exercise: item.exercise,
       sets: item.sets,
       completed: false,
+      completedSets: new Array(item.sets).fill(false), // Set completion status for each set
       updatedAt: new Date().toISOString(),
     }));
     localStorage.setItem(`pulse_workouts_${userId}`, JSON.stringify(initialWorkouts));
@@ -129,7 +135,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   }
 
   const userRef = doc(db, "users", uid);
-  const snap = await getDoc(userRef);
+  const snap = await getDocFromServer(userRef);
   if (snap.exists()) {
     return snap.data() as UserProfile;
   }
@@ -143,7 +149,7 @@ export async function getAllUserProfiles(): Promise<UserProfile[]> {
   }
 
   const usersColl = collection(db, "users");
-  const snap = await getDocs(usersColl);
+  const snap = await getDocsFromServer(usersColl);
   const users: UserProfile[] = [];
   snap.forEach((doc) => {
     users.push(doc.data() as UserProfile);
@@ -171,6 +177,7 @@ export async function initializeUserWorkouts(userId: string) {
       exercise: item.exercise,
       sets: item.sets,
       completed: false,
+      completedSets: new Array(item.sets).fill(false), // Initialize with false flags
       updatedAt: new Date().toISOString(),
     };
     batch.set(workoutRef, workout);
@@ -184,7 +191,7 @@ export async function getUserWorkouts(userId: string): Promise<WorkoutExercise[]
   }
 
   const q = query(collection(db, "workouts"), where("userId", "==", userId));
-  const snap = await getDocs(q);
+  const snap = await getDocsFromServer(q);
   const workouts: WorkoutExercise[] = [];
   snap.forEach((doc) => {
     workouts.push({ id: doc.id, ...doc.data() } as WorkoutExercise);
@@ -197,45 +204,177 @@ export async function getUserWorkouts(userId: string): Promise<WorkoutExercise[]
   return workouts;
 }
 
+export async function updateWorkoutSets(
+  userId: string,
+  exerciseId: string,
+  completedSets: boolean[],
+  sets: number
+) {
+  const isCompleted = completedSets.length > 0 && completedSets.every((s) => s === true);
+
+  if (!isFirebaseConfigured) {
+    const workoutsList = getLocalWorkouts(userId);
+    const exerciseIndex = workoutsList.findIndex((w) => w.id === exerciseId);
+    if (exerciseIndex === -1) return;
+
+    const target = workoutsList[exerciseIndex];
+    const wasCompleted = target.completed;
+
+    workoutsList[exerciseIndex] = {
+      ...target,
+      sets,
+      completedSets,
+      completed: isCompleted,
+      updatedAt: new Date().toISOString(),
+    };
+    saveLocalWorkouts(userId, workoutsList);
+
+    if (wasCompleted !== isCompleted) {
+      const localUsers = getLocalUsers();
+      const updatedUsers = localUsers.map((u) =>
+        u.uid === userId
+          ? {
+              ...u,
+              completedCount: Math.max(0, (u.completedCount || 0) + (isCompleted ? 1 : -1)),
+            }
+          : u
+      );
+      saveLocalUsers(updatedUsers);
+    }
+    return;
+  }
+
+  const exerciseRef = doc(db, "workouts", exerciseId);
+  const exerciseSnap = await getDoc(exerciseRef);
+  if (!exerciseSnap.exists()) return;
+
+  const data = exerciseSnap.data() as WorkoutExercise;
+  const wasCompleted = data.completed;
+
+  await updateDoc(exerciseRef, {
+    sets,
+    completedSets,
+    completed: isCompleted,
+    updatedAt: new Date().toISOString(),
+  });
+
+  if (wasCompleted !== isCompleted) {
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, {
+      completedCount: increment(isCompleted ? 1 : -1),
+    });
+  }
+}
+
+export async function addCustomWorkoutExercise(
+  userId: string,
+  day: string,
+  muscle: string,
+  exerciseName: string,
+  sets: number
+): Promise<WorkoutExercise> {
+  const completedSets = new Array(sets).fill(false);
+  const workout: WorkoutExercise = {
+    userId,
+    day,
+    muscle,
+    exercise: exerciseName,
+    sets,
+    completed: false,
+    completedSets,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (!isFirebaseConfigured) {
+    const workoutsList = getLocalWorkouts(userId);
+    const mockId = `local_custom_${userId}_${Math.random().toString(36).substring(2, 9)}`;
+    const fullWorkout = { id: mockId, ...workout };
+    
+    workoutsList.push(fullWorkout);
+    saveLocalWorkouts(userId, workoutsList);
+    return fullWorkout;
+  }
+
+  const workoutsColl = collection(db, "workouts");
+  const docRef = await addDoc(workoutsColl, workout);
+  return { id: docRef.id, ...workout };
+}
+
+export async function deleteWorkoutExercise(userId: string, exerciseId: string) {
+  if (!isFirebaseConfigured) {
+    const workoutsList = getLocalWorkouts(userId);
+    const target = workoutsList.find((w) => w.id === exerciseId);
+    if (!target) return;
+
+    const updated = workoutsList.filter((w) => w.id !== exerciseId);
+    saveLocalWorkouts(userId, updated);
+
+    if (target.completed) {
+      const localUsers = getLocalUsers();
+      const updatedUsers = localUsers.map((u) =>
+        u.uid === userId
+          ? {
+              ...u,
+              completedCount: Math.max(0, (u.completedCount || 0) - 1),
+            }
+          : u
+      );
+      saveLocalUsers(updatedUsers);
+    }
+    return;
+  }
+
+  const exerciseRef = doc(db, "workouts", exerciseId);
+  const exerciseSnap = await getDoc(exerciseRef);
+  if (!exerciseSnap.exists()) return;
+
+  const data = exerciseSnap.data() as WorkoutExercise;
+  const wasCompleted = data.completed;
+
+  await deleteDoc(exerciseRef);
+
+  if (wasCompleted) {
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, {
+      completedCount: increment(-1),
+    });
+  }
+}
+
+export async function deleteUserProfileAndData(userId: string) {
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(`pulse_workouts_${userId}`);
+      const localUsers = getLocalUsers();
+      saveLocalUsers(localUsers.filter((u) => u.uid !== userId));
+    }
+    return;
+  }
+
+  const userRef = doc(db, "users", userId);
+  await deleteDoc(userRef);
+
+  const q = query(collection(db, "workouts"), where("userId", "==", userId));
+  const snap = await getDocs(q);
+  
+  const batch = writeBatch(db);
+  snap.forEach((doc) => {
+    batch.delete(doc.ref);
+  });
+  await batch.commit();
+}
+
 export async function toggleWorkoutExercise(
   userId: string,
   exerciseId: string,
   completed: boolean
 ) {
-  if (!isFirebaseConfigured) {
-    // 1. Toggle completion in local workouts list
-    const workouts = getLocalWorkouts(userId);
-    const updated = workouts.map((w) =>
-      w.id === exerciseId
-        ? { ...w, completed, updatedAt: new Date().toISOString() }
-        : w
-    );
-    saveLocalWorkouts(userId, updated);
-
-    // 2. Adjust completion count in user profile list
-    const localUsers = getLocalUsers();
-    const updatedUsers = localUsers.map((u) =>
-      u.uid === userId
-        ? {
-            ...u,
-            completedCount: Math.max(0, (u.completedCount || 0) + (completed ? 1 : -1)),
-          }
-        : u
-    );
-    saveLocalUsers(updatedUsers);
-    return;
+  const workouts = await getUserWorkouts(userId);
+  const exercise = workouts.find((w) => w.id === exerciseId);
+  if (exercise) {
+    const setsList = new Array(exercise.sets).fill(completed);
+    await updateWorkoutSets(userId, exerciseId, setsList, exercise.sets);
   }
-
-  const exerciseRef = doc(db, "workouts", exerciseId);
-  await updateDoc(exerciseRef, {
-    completed,
-    updatedAt: new Date().toISOString(),
-  });
-
-  const userRef = doc(db, "users", userId);
-  await updateDoc(userRef, {
-    completedCount: increment(completed ? 1 : -1),
-  });
 }
 
 export async function updateUserStreak(userId: string, streak: number) {
@@ -250,4 +389,29 @@ export async function updateUserStreak(userId: string, streak: number) {
 
   const userRef = doc(db, "users", userId);
   await updateDoc(userRef, { streak });
+}
+
+export async function clearDatabaseCache() {
+  if (isFirebaseConfigured && db) {
+    try {
+      await clearIndexedDbPersistence(db);
+    } catch (err) {
+      console.error("Failed to clear Firestore IndexedDB cache:", err);
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    // Clear local storage profiles
+    localStorage.removeItem("pulse_users");
+    
+    // Find all pulse_workouts_* and pulse_demo_* keys
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith("pulse_workouts_") || key.startsWith("pulse_demo_"))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+  }
 }

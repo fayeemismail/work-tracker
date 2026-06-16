@@ -89,6 +89,11 @@ export function Navbar() {
                   Community
                 </Button>
               </Link>
+              <Link href="/profile" className="hidden sm:inline-block">
+                <Button variant="ghost" size="sm" className="text-sm font-medium">
+                  Profile
+                </Button>
+              </Link>
               
               <Button
                 variant="outline"

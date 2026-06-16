@@ -8,11 +8,12 @@ import { WorkoutCard } from "@/components/WorkoutCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { DAYS_OF_WEEK } from "@/lib/constants";
-import { CalendarRange, Sparkles, Smile } from "lucide-react";
+import { CalendarRange, Sparkles, Smile, Plus, Minus } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 
 export default function Dashboard() {
   const { profile } = useAuth();
-  const { workouts, toggleExercise, loading, weeklyProgress, weeklyCompletedCount } = useWorkout();
+  const { workouts, loading, weeklyProgress, weeklyCompletedCount, addCustomExercise } = useWorkout();
 
   // Default to today's day of week
   const todayName = useMemo(() => {
@@ -21,6 +22,42 @@ export default function Dashboard() {
   }, []);
 
   const [selectedDay, setSelectedDay] = useState<string>(todayName);
+
+  const [isAddingWorkout, setIsAddingWorkout] = useState(false);
+  const [newMuscleGroup, setNewMuscleGroup] = useState("");
+  const [firstExerciseName, setFirstExerciseName] = useState("");
+  const [newWorkoutSets, setNewWorkoutSets] = useState(3);
+  const [isSubmittingWorkout, setIsSubmittingWorkout] = useState(false);
+
+  const handleCreateWorkoutCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMuscleGroup.trim() || !firstExerciseName.trim()) return;
+
+    setIsSubmittingWorkout(true);
+    try {
+      await addCustomExercise(
+        selectedDay,
+        newMuscleGroup.trim(),
+        firstExerciseName.trim(),
+        newWorkoutSets
+      );
+      setNewMuscleGroup("");
+      setFirstExerciseName("");
+      setNewWorkoutSets(3);
+      setIsAddingWorkout(false);
+    } catch (err) {
+      console.error("Error creating new workout category:", err);
+    } finally {
+      setIsSubmittingWorkout(false);
+    }
+  };
+
+  const handleCancelWorkoutAdd = () => {
+    setNewMuscleGroup("");
+    setFirstExerciseName("");
+    setNewWorkoutSets(3);
+    setIsAddingWorkout(false);
+  };
 
   // Group workouts of the selected day by muscle group
   const groupedDayWorkouts = useMemo(() => {
@@ -150,15 +187,117 @@ export default function Dashboard() {
                 <div className="h-48 rounded-xl bg-secondary animate-pulse" />
               </>
             ) : (
-              Object.entries(groupedDayWorkouts).map(([muscle, exercises]) => (
-                <WorkoutCard
-                  key={muscle}
-                  muscle={muscle}
-                  exercises={exercises}
-                  onToggleExercise={toggleExercise}
-                  disabled={loading}
-                />
-              ))
+              <>
+                {Object.entries(groupedDayWorkouts).map(([muscle, exercises]) => (
+                  <WorkoutCard
+                    key={muscle}
+                    day={selectedDay}
+                    muscle={muscle}
+                    exercises={exercises}
+                    disabled={loading}
+                  />
+                ))}
+
+                {!isAddingWorkout ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddingWorkout(true)}
+                    className="flex flex-col items-center justify-center gap-3 w-full min-h-[220px] p-6 border border-dashed border-border rounded-2xl hover:border-foreground/20 hover:bg-secondary/10 hover:shadow-xs transition-all duration-150 cursor-pointer"
+                  >
+                    <div className="h-10 w-10 rounded-full bg-secondary flex items-center justify-center text-muted-foreground border border-border">
+                      <Plus className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <span className="text-sm font-semibold text-foreground block">Add Muscle Group</span>
+                      <span className="text-xs text-muted-foreground">Start a new category on {selectedDay}</span>
+                    </div>
+                  </button>
+                ) : (
+                  <Card className="flex flex-col gap-4 border border-border bg-card p-5 rounded-2xl shadow-xs animate-scale-up">
+                    <CardHeader className="p-0 mb-0 flex flex-row items-center justify-between">
+                      <div>
+                        <CardTitle className="text-sm font-semibold text-foreground uppercase tracking-wider">
+                          New Muscle Group
+                        </CardTitle>
+                        <CardDescription className="text-xs mt-0.5">
+                          Adding to {selectedDay}&apos;s schedule
+                        </CardDescription>
+                      </div>
+                    </CardHeader>
+
+                    <form onSubmit={handleCreateWorkoutCategory} className="flex flex-col gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Muscle Group Name</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Shoulders, Calves, Cardio"
+                          value={newMuscleGroup}
+                          onChange={(e) => setNewMuscleGroup(e.target.value)}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring"
+                          autoFocus
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">First Exercise Name</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Overhead Press"
+                          value={firstExerciseName}
+                          onChange={(e) => setFirstExerciseName(e.target.value)}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Sets</span>
+                          <span className="text-xs text-muted-foreground">{newWorkoutSets} sets total</span>
+                        </div>
+                        <div className="flex items-center gap-1 bg-secondary border border-border rounded-lg p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setNewWorkoutSets((prev) => Math.max(1, prev - 1))}
+                            disabled={newWorkoutSets <= 1}
+                            className="p-1 text-muted-foreground hover:text-foreground hover:bg-card rounded transition-colors disabled:opacity-20 cursor-pointer"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </button>
+                          <span className="text-xs font-semibold px-2 min-w-[20px] text-center text-foreground">{newWorkoutSets}</span>
+                          <button
+                            type="button"
+                            onClick={() => setNewWorkoutSets((prev) => prev + 1)}
+                            className="p-1 text-muted-foreground hover:text-foreground hover:bg-card rounded transition-colors cursor-pointer"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/50">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleCancelWorkoutAdd}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="submit"
+                          variant="primary"
+                          size="sm"
+                          loading={isSubmittingWorkout}
+                        >
+                          Create
+                        </Button>
+                      </div>
+                    </form>
+                  </Card>
+                )}
+              </>
             )}
             
           </div>

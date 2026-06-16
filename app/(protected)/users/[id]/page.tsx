@@ -4,14 +4,15 @@ import React, { useEffect, useState, useMemo, use } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { UserProfile, WorkoutExercise } from "@/types";
-import { getUserProfile, getUserWorkouts } from "@/services/db";
+import { getUserProfile, getUserWorkouts, deleteUserProfileAndData } from "@/services/db";
 import { ProfileCard } from "@/components/ProfileCard";
 import { WorkoutCard } from "@/components/WorkoutCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { DAYS_OF_WEEK } from "@/lib/constants";
-import { ArrowLeft, CalendarRange, Smile } from "lucide-react";
+import { ArrowLeft, CalendarRange, Smile, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { useRouter } from "next/navigation";
 
 interface UserProfilePageProps {
   params: Promise<{ id: string }>;
@@ -20,10 +21,23 @@ interface UserProfilePageProps {
 export default function UserProfilePage({ params }: UserProfilePageProps) {
   const { id: userId } = use(params);
   const { user: currentUser } = useAuth();
+  const router = useRouter();
   
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [workouts, setWorkouts] = useState<WorkoutExercise[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const handleDeleteUserProfile = async () => {
+    if (!profile) return;
+    if (window.confirm(`Are you sure you want to permanently remove ${profile.name}'s profile and all their workout routine data?`)) {
+      try {
+        await deleteUserProfileAndData(profile.uid);
+        router.push("/users");
+      } catch (err) {
+        console.error("Failed to delete user profile:", err);
+      }
+    }
+  };
 
   // Default weekday view
   const todayName = useMemo(() => {
@@ -106,19 +120,32 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
     <div className="flex flex-col gap-6 md:gap-8">
       
       {/* Back to Community Link & Title */}
-      <div className="flex flex-col gap-2 items-start">
+      <div className="flex flex-col gap-2 items-start w-full">
         <Link href="/users" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium group">
           <ArrowLeft className="h-3.5 w-3.5 group-hover:-translate-x-0.5 transition-transform" />
           Back to Community
         </Link>
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-foreground">
-            {isSelf ? "My Profile" : `${profile.name}'s Profile`}
-          </h1>
-          {isSelf && (
-            <span className="text-xs font-semibold bg-secondary px-2.5 py-1 rounded-full border border-border">
-              You
-            </span>
+        <div className="flex flex-row items-center justify-between gap-3 w-full">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-foreground">
+              {isSelf ? "My Profile" : `${profile.name}'s Profile`}
+            </h1>
+            {isSelf && (
+              <span className="text-xs font-semibold bg-secondary px-2.5 py-1 rounded-full border border-border">
+                You
+              </span>
+            )}
+          </div>
+          {!isSelf && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDeleteUserProfile}
+              className="text-red-500 border-red-500/20 hover:bg-red-500/5 hover:text-red-600 gap-1.5 cursor-pointer ml-auto"
+            >
+              <Trash2 className="h-4 w-4" />
+              Remove Profile
+            </Button>
           )}
         </div>
       </div>
@@ -208,9 +235,9 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
             {Object.entries(groupedDayWorkouts).map(([muscle, exercises]) => (
               <WorkoutCard
                 key={muscle}
+                day={selectedDay}
                 muscle={muscle}
                 exercises={exercises}
-                onToggleExercise={() => {}} // Disabled toggles for public/view-only mode!
                 disabled={true} // Forces all checkboxes to be read-only!
               />
             ))}

@@ -7,11 +7,14 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   updateProfile,
+  signInWithPopup,
+  GoogleAuthProvider,
+  deleteUser,
   User,
 } from "firebase/auth";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
 import { UserProfile } from "@/types";
-import { createUserProfile, getUserProfile, getAllUserProfiles } from "@/services/db";
+import { createUserProfile, getUserProfile, getAllUserProfiles, deleteUserProfileAndData } from "@/services/db";
 
 interface AuthContextType {
   user: User | null;
@@ -20,7 +23,9 @@ interface AuthContextType {
   isConfigured: boolean;
   signup: (email: string, password: string, name: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -29,7 +34,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true); // Always starts as true to check local session
+  const [loading, setLoading] = useState(true);
 
   const refreshProfile = async () => {
     if (user) {
@@ -139,6 +144,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(fireUser);
   };
 
+  const loginWithGoogle = async () => {
+    if (!isFirebaseConfigured) {
+      const mockUid = "demo_google_" + Math.random().toString(36).substring(2, 9);
+      const name = "Google Trainer " + Math.random().toString(36).substring(2, 5).toUpperCase();
+      const email = "google.demo@example.com";
+      const userProf = await createUserProfile(mockUid, name, email);
+      
+      setUser({
+        uid: mockUid,
+        displayName: name,
+        email: email,
+      } as unknown as User);
+      setProfile(userProf);
+      localStorage.setItem("pulse_demo_logged_in_uid", mockUid);
+      return;
+    }
+
+    const provider = new GoogleAuthProvider();
+    const result = await signInWithPopup(auth, provider);
+    const fireUser = result.user;
+
+    const existingProfile = await getUserProfile(fireUser.uid);
+    if (!existingProfile) {
+      const userProf = await createUserProfile(
+        fireUser.uid,
+        fireUser.displayName || "Google Trainer",
+        fireUser.email || "google@example.com"
+      );
+      setProfile(userProf);
+    } else {
+      setProfile(existingProfile);
+    }
+    setUser(fireUser);
+  };
+
   const logout = async () => {
     if (!isFirebaseConfigured) {
       localStorage.removeItem("pulse_demo_logged_in_uid");
@@ -147,6 +187,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     await signOut(auth);
+    setUser(null);
+    setProfile(null);
+  };
+
+  const deleteAccount = async () => {
+    if (!user) return;
+    
+    const userId = user.uid;
+    // 1. Delete data from DB
+    await deleteUserProfileAndData(userId);
+
+    // 2. Delete user from auth
+    if (isFirebaseConfigured) {
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        await deleteUser(currentUser);
+      }
+    } else {
+      localStorage.removeItem("pulse_demo_logged_in_uid");
+    }
+
+    // 3. Reset states
     setUser(null);
     setProfile(null);
   };
@@ -160,7 +222,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isConfigured: isFirebaseConfigured,
         signup,
         login,
+        loginWithGoogle,
         logout,
+        deleteAccount,
         refreshProfile,
       }}
     >

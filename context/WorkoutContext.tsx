@@ -3,12 +3,23 @@
 import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
 import { useAuth } from "./AuthContext";
 import { WorkoutExercise } from "@/types";
-import { getUserWorkouts, toggleWorkoutExercise, updateUserStreak } from "@/services/db";
+import {
+  getUserWorkouts,
+  updateWorkoutSets,
+  updateUserStreak,
+  addCustomWorkoutExercise,
+  deleteWorkoutExercise,
+} from "@/services/db";
 
 interface WorkoutContextType {
   workouts: WorkoutExercise[];
   loading: boolean;
   toggleExercise: (exerciseId: string) => Promise<void>;
+  toggleSet: (exerciseId: string, setIndex: number) => Promise<void>;
+  addSet: (exerciseId: string) => Promise<void>;
+  removeSet: (exerciseId: string) => Promise<void>;
+  addCustomExercise: (day: string, muscle: string, exerciseName: string, sets: number) => Promise<void>;
+  deleteExercise: (exerciseId: string) => Promise<void>;
   refreshWorkouts: () => Promise<void>;
   todayWorkout: WorkoutExercise[];
   todayCompletedCount: number;
@@ -72,7 +83,7 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
 
   // Calculate weekly stats
   const { weeklyCompletedCount, weeklyProgress } = useMemo(() => {
-    const total = workouts.length; // 24
+    const total = workouts.length;
     const completed = workouts.filter((w) => w.completed).length;
     const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
     return { weeklyCompletedCount: completed, weeklyProgress: progress };
@@ -96,15 +107,11 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     }
 
     let activeStreak = 0;
-    // Walk backward from today/Saturday to calculate the consecutive streak
     for (let i = todayIdx; i >= 0; i--) {
       const d = daysOrder[i];
       if (dayCompleted[d]) {
         activeStreak++;
       } else {
-        // If a past day is NOT completed, the streak is broken.
-        // However, if they haven't finished TODAY's workout yet, we don't break the streak immediately
-        // if they finished previous days. We only break if they also missed previous days.
         if (i === todayIdx) {
           continue;
         }
@@ -125,41 +132,164 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     }
   }, [streak, user, profile, workouts, refreshProfile]);
 
-  // Toggle exercise completion with optimistic UI update
+  // Backwards compatibility fallback toggle for the whole exercise
   const toggleExercise = async (exerciseId: string) => {
     if (!user) return;
+    const exerciseIndex = workouts.findIndex((w) => w.id === exerciseId);
+    if (exerciseIndex === -1) return;
+    const exercise = workouts[exerciseIndex];
+    const newCompleted = !exercise.completed;
+    const newSetsList = new Array(exercise.sets).fill(newCompleted);
 
-    // Find the item to toggle
+    // Optimistic Update
+    const updated = [...workouts];
+    updated[exerciseIndex] = {
+      ...exercise,
+      completed: newCompleted,
+      completedSets: newSetsList,
+      updatedAt: new Date().toISOString(),
+    };
+    setWorkouts(updated);
+
+    try {
+      await updateWorkoutSets(user.uid, exerciseId, newSetsList, exercise.sets);
+      await refreshProfile();
+    } catch (err) {
+      console.error(err);
+      refreshWorkouts();
+    }
+  };
+
+  // Toggle a single set checkbox
+  const toggleSet = async (exerciseId: string, setIndex: number) => {
+    if (!user) return;
+
     const exerciseIndex = workouts.findIndex((w) => w.id === exerciseId);
     if (exerciseIndex === -1) return;
 
-    const targetExercise = workouts[exerciseIndex];
-    const originalCompleted = targetExercise.completed;
-    const newCompleted = !originalCompleted;
+    const exercise = workouts[exerciseIndex];
+    const updatedSetsList = [...(exercise.completedSets || new Array(exercise.sets).fill(false))];
+    updatedSetsList[setIndex] = !updatedSetsList[setIndex];
+    const newCompleted = updatedSetsList.length > 0 && updatedSetsList.every((s) => s === true);
 
-    // 1. Optimistic Update local state
+    // 1. Optimistic Update
     const updatedWorkouts = [...workouts];
     updatedWorkouts[exerciseIndex] = {
-      ...targetExercise,
+      ...exercise,
+      completedSets: updatedSetsList,
       completed: newCompleted,
       updatedAt: new Date().toISOString(),
     };
     setWorkouts(updatedWorkouts);
 
-    // 2. Database Update
+    // 2. Sync to database
     try {
-      await toggleWorkoutExercise(user.uid, exerciseId, newCompleted);
-      // Refresh profile to update user's completedCount in UI
+      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, exercise.sets);
       await refreshProfile();
     } catch (err) {
-      console.error("Failed to update exercise completion on Firestore:", err);
-      // Revert state if DB write fails
-      const revertedWorkouts = [...workouts];
-      revertedWorkouts[exerciseIndex] = {
-        ...targetExercise,
-        completed: originalCompleted,
-      };
-      setWorkouts(revertedWorkouts);
+      console.error("Failed to toggle set checklist:", err);
+      refreshWorkouts();
+    }
+  };
+
+  // Add a set to an exercise
+  const addSet = async (exerciseId: string) => {
+    if (!user) return;
+
+    const exerciseIndex = workouts.findIndex((w) => w.id === exerciseId);
+    if (exerciseIndex === -1) return;
+
+    const exercise = workouts[exerciseIndex];
+    const updatedSetsList = [...(exercise.completedSets || new Array(exercise.sets).fill(false)), false];
+    const newSetsCount = exercise.sets + 1;
+    const newCompleted = false;
+
+    // 1. Optimistic Update
+    const updatedWorkouts = [...workouts];
+    updatedWorkouts[exerciseIndex] = {
+      ...exercise,
+      sets: newSetsCount,
+      completedSets: updatedSetsList,
+      completed: newCompleted,
+      updatedAt: new Date().toISOString(),
+    };
+    setWorkouts(updatedWorkouts);
+
+    // 2. Sync to database
+    try {
+      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, newSetsCount);
+      await refreshProfile();
+    } catch (err) {
+      console.error("Failed to add set:", err);
+      refreshWorkouts();
+    }
+  };
+
+  // Remove a set from an exercise
+  const removeSet = async (exerciseId: string) => {
+    if (!user) return;
+
+    const exerciseIndex = workouts.findIndex((w) => w.id === exerciseId);
+    if (exerciseIndex === -1) return;
+
+    const exercise = workouts[exerciseIndex];
+    if (exercise.sets <= 1) return;
+
+    const updatedSetsList = [...(exercise.completedSets || new Array(exercise.sets).fill(false))];
+    updatedSetsList.pop();
+    const newSetsCount = exercise.sets - 1;
+    const newCompleted = updatedSetsList.length > 0 && updatedSetsList.every((s) => s === true);
+
+    // 1. Optimistic Update
+    const updatedWorkouts = [...workouts];
+    updatedWorkouts[exerciseIndex] = {
+      ...exercise,
+      sets: newSetsCount,
+      completedSets: updatedSetsList,
+      completed: newCompleted,
+      updatedAt: new Date().toISOString(),
+    };
+    setWorkouts(updatedWorkouts);
+
+    // 2. Sync to database
+    try {
+      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, newSetsCount);
+      await refreshProfile();
+    } catch (err) {
+      console.error("Failed to remove set:", err);
+      refreshWorkouts();
+    }
+  };
+
+  // Add custom workout exercise
+  const addCustomExercise = async (day: string, muscle: string, exerciseName: string, sets: number) => {
+    if (!user) return;
+    
+    setTimeout(() => setLoading(true), 0);
+    try {
+      const newWorkout = await addCustomWorkoutExercise(user.uid, day, muscle, exerciseName, sets);
+      setWorkouts((prev) => [...prev, newWorkout]);
+      await refreshProfile();
+    } catch (err) {
+      console.error("Failed to add custom exercise:", err);
+    } finally {
+      setTimeout(() => setLoading(false), 0);
+    }
+  };
+
+  // Delete workout exercise (custom or standard)
+  const deleteExercise = async (exerciseId: string) => {
+    if (!user) return;
+
+    setTimeout(() => setLoading(true), 0);
+    try {
+      await deleteWorkoutExercise(user.uid, exerciseId);
+      setWorkouts((prev) => prev.filter((w) => w.id !== exerciseId));
+      await refreshProfile();
+    } catch (err) {
+      console.error("Failed to delete exercise:", err);
+    } finally {
+      setTimeout(() => setLoading(false), 0);
     }
   };
 
@@ -169,6 +299,11 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
         workouts,
         loading,
         toggleExercise,
+        toggleSet,
+        addSet,
+        removeSet,
+        addCustomExercise,
+        deleteExercise,
         refreshWorkouts,
         todayWorkout,
         todayCompletedCount,

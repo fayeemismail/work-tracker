@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Users, Flame, CheckCircle } from "lucide-react";
+import { LayoutDashboard, Users, Flame, CheckCircle, User } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useWorkout } from "@/context/WorkoutContext";
 
@@ -15,6 +15,7 @@ export function Sidebar() {
   const links = [
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Community", href: "/users", icon: Users },
+    { name: "Profile", href: "/profile", icon: User },
   ];
 
   return (
