@@ -94,6 +94,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signup = async (email: string, password: string, name: string) => {
     if (!isFirebaseConfigured) {
+      if (email.toLowerCase() === process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase() && password !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+        throw new Error(`Password for admin account must be '${process.env.NEXT_PUBLIC_ADMIN_PASSWORD}'.`);
+      }
+
       const mockUid = "demo_" + Math.random().toString(36).substring(2, 9);
       const userProf = await createUserProfile(mockUid, name, email);
       
@@ -117,6 +121,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string) => {
     if (!isFirebaseConfigured) {
+      if (email.toLowerCase() === process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase() && password !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+        throw new Error("Invalid password for admin user.");
+      }
+
       const resolvedUsers = await getAllUserProfiles();
       let found = resolvedUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
       

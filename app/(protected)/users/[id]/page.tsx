@@ -22,7 +22,7 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
   const { id: userId } = use(params);
   const { user: currentUser } = useAuth();
   const router = useRouter();
-  
+
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [workouts, setWorkouts] = useState<WorkoutExercise[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,14 +70,14 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
   const groupedDayWorkouts = useMemo(() => {
     const dayWorkouts = workouts.filter((w) => w.day === selectedDay);
     const muscles: Record<string, typeof dayWorkouts> = {};
-    
+
     dayWorkouts.forEach((w) => {
       if (!muscles[w.muscle]) {
         muscles[w.muscle] = [];
       }
       muscles[w.muscle].push(w);
     });
-    
+
     return muscles;
   }, [workouts, selectedDay]);
 
@@ -91,6 +91,7 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
 
   // Check if viewing current logged-in user profile
   const isSelf = currentUser?.uid === userId;
+  const isAdmin = currentUser?.email?.toLowerCase() === process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase();
 
   if (loading) {
     return (
@@ -118,7 +119,7 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
 
   return (
     <div className="flex flex-col gap-6 md:gap-8">
-      
+
       {/* Back to Community Link & Title */}
       <div className="flex flex-col gap-2 items-start w-full">
         <Link href="/users" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors font-medium group">
@@ -136,7 +137,7 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
               </span>
             )}
           </div>
-          {!isSelf && (
+          {!isSelf && isAdmin && (
             <Button
               variant="outline"
               size="sm"
@@ -199,15 +200,14 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
               <button
                 key={day}
                 onClick={() => setSelectedDay(day)}
-                className={`snap-center flex flex-col items-center justify-center min-w-[76px] py-2 px-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all duration-150 ${
-                  isSelected
-                    ? "bg-primary border-primary text-primary-foreground font-semibold shadow-sm"
-                    : isToday
+                className={`snap-center flex flex-col items-center justify-center min-w-[76px] py-2 px-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all duration-150 ${isSelected
+                  ? "bg-primary border-primary text-primary-foreground font-semibold shadow-sm"
+                  : isToday
                     ? "bg-secondary/70 border-foreground/30 text-foreground"
                     : isDayCompleted
-                    ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
-                    : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
-                }`}
+                      ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
+                      : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
+                  }`}
               >
                 <span>{day.substring(0, 3)}</span>
                 {isToday && <span className="text-[9px] opacity-75 mt-0.5 font-bold">TODAY</span>}
