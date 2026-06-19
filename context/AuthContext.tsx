@@ -15,7 +15,7 @@ import {
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
 import { UserProfile } from "@/types";
 import { createUserProfile, getUserProfile, getAllUserProfiles, deleteUserProfileAndData, migrateLocalDataToFirebase } from "@/services/db";
-import { deleteUserAccountAdmin } from "@/app/actions/admin";
+import { deleteUserAccountAdmin, checkAndRegisterAdmin, isEmailAdmin } from "@/app/actions/admin";
 
 interface AuthContextType {
   user: User | null;
@@ -145,18 +145,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const login = async (email: string, password: string) => {
+    const cleanEmail = email.toLowerCase();
+    
+    // Call server action to check if it's admin credentials and auto-register them securely on server
+    const adminCheck = await checkAndRegisterAdmin(email, password);
+    const isAdminEmail = await isEmailAdmin(email);
+
     if (!isFirebaseConfigured) {
-      if (email.toLowerCase() === process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase() && password !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+      if (isAdminEmail && !adminCheck.success) {
         throw new Error("Invalid password for admin user.");
       }
 
       const resolvedUsers = await getAllUserProfiles();
-      let found = resolvedUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+      let found = resolvedUsers.find((u) => u.email.toLowerCase() === cleanEmail);
       
       if (!found) {
         // Auto-create profile so sign-in always succeeds during local tests
         const mockUid = "demo_" + Math.random().toString(36).substring(2, 9);
-        const name = email.split("@")[0].charAt(0).toUpperCase() + email.split("@")[0].slice(1);
+        const name = cleanEmail === "adminfatracker@gmail.com" ? "Admin FaTracker" : (cleanEmail.split("@")[0].charAt(0).toUpperCase() + cleanEmail.split("@")[0].slice(1));
         found = await createUserProfile(mockUid, name, email);
       }
       
@@ -172,8 +178,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const prevDemoUid = getPrevDemoUid();
 
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const fireUser = userCredential.user;
+    let fireUser;
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      fireUser = userCredential.user;
+    } catch (err: any) {
+      // If client sign-in failed but the admin check was successful (e.g. server auto-creation worked or there is a local cache issue),
+      // we can try signing in again.
+      if (adminCheck.success) {
+        try {
+          const userCredential = await signInWithEmailAndPassword(auth, email, password);
+          fireUser = userCredential.user;
+        } catch (retryErr) {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
     
     if (prevDemoUid) {
       await migrateLocalDataToFirebase(prevDemoUid, fireUser.uid);

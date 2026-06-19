@@ -14,6 +14,7 @@ import { DAYS_OF_WEEK } from "@/lib/constants";
 import { ArrowLeft, CalendarRange, Smile, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useRouter } from "next/navigation";
+import { isEmailAdmin } from "@/app/actions/admin";
 
 interface UserProfilePageProps {
   params: Promise<{ id: string }>;
@@ -89,17 +90,71 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
     return muscles;
   }, [workouts, selectedDay]);
 
-  // Calculate statistics
-  const { weeklyCompletedCount, weeklyProgress } = useMemo(() => {
+  // Calculate statistics using the day-averaged completed muscle groups logic
+  const { weeklyCompletedCount, weeklyTotalCount, weeklyProgress } = useMemo(() => {
     const total = workouts.length;
     const completed = workouts.filter((w) => w.completed).length;
-    const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
-    return { weeklyCompletedCount: completed, weeklyProgress: progress };
+    
+    const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const dayProgresses: Record<string, number> = {};
+    
+    days.forEach((day) => {
+      if (day === "Sunday") {
+        dayProgresses[day] = 100;
+        return;
+      }
+      
+      const dayWorkouts = workouts.filter((w) => w.day === day);
+      if (dayWorkouts.length === 0) {
+        dayProgresses[day] = 100;
+        return;
+      }
+      
+      const muscleGroups: Record<string, boolean> = {};
+      dayWorkouts.forEach((w) => {
+        if (w.muscle) {
+          if (muscleGroups[w.muscle] === undefined) {
+            muscleGroups[w.muscle] = true;
+          }
+          if (!w.completed) {
+            muscleGroups[w.muscle] = false;
+          }
+        }
+      });
+      
+      const uniqueMuscles = Object.keys(muscleGroups);
+      if (uniqueMuscles.length === 0) {
+        dayProgresses[day] = 100;
+        return;
+      }
+      
+      const completedMusclesCount = uniqueMuscles.filter((m) => muscleGroups[m]).length;
+      const progress = Math.min(100, Math.round((completedMusclesCount / 2) * 100));
+      dayProgresses[day] = progress;
+    });
+    
+    const sum = Object.values(dayProgresses).reduce((acc, val) => acc + val, 0);
+    const weeklyProgressVal = Math.round(sum / 7);
+    
+    return { weeklyCompletedCount: completed, weeklyTotalCount: total, weeklyProgress: weeklyProgressVal };
   }, [workouts]);
 
   // Check if viewing current logged-in user profile
   const isSelf = currentUser?.uid === userId;
-  const isAdmin = currentUser?.email?.toLowerCase() === process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase();
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isTargetAdmin, setIsTargetAdmin] = useState(false);
+
+  useEffect(() => {
+    if (currentUser?.email) {
+      isEmailAdmin(currentUser.email).then(setIsAdmin);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (profile?.email) {
+      isEmailAdmin(profile.email).then(setIsTargetAdmin);
+    }
+  }, [profile]);
 
   if (loading) {
     return (
@@ -111,7 +166,10 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
     );
   }
 
-  if (!profile) {
+  const isTargetAdminTracker = profile?.email?.toLowerCase() === "adminfatracker@gmail.com";
+  const isAllowedToView = !isTargetAdminTracker || isAdmin || isSelf;
+
+  if (!profile || !isAllowedToView) {
     return (
       <div className="text-center py-16 flex flex-col items-center gap-4">
         <h2 className="text-xl font-bold">Trainer profile not found</h2>
@@ -134,23 +192,23 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
           <ArrowLeft className="h-3.5 w-3.5 group-hover:-translate-x-0.5 transition-transform" />
           Back to Community
         </Link>
-        <div className="flex flex-row items-center justify-between gap-3 w-full">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-foreground">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 w-full">
+          <div className="flex items-center gap-3 min-w-0">
+            <h1 className="text-xl md:text-3xl font-extrabold tracking-tight text-foreground truncate">
               {isSelf ? "My Profile" : `${profile.name}'s Profile`}
             </h1>
             {isSelf && (
-              <span className="text-xs font-semibold bg-secondary px-2.5 py-1 rounded-full border border-border">
+              <span className="flex-shrink-0 text-xs font-semibold bg-secondary px-2.5 py-1 rounded-full border border-border">
                 You
               </span>
             )}
           </div>
-          {!isSelf && isAdmin && (
+          {!isSelf && isAdmin && !isTargetAdmin && (
             <Button
               variant="outline"
               size="sm"
               onClick={handleDeleteUserProfile}
-              className="text-red-500 border-red-500/20 hover:bg-red-500/5 hover:text-red-600 gap-1.5 cursor-pointer ml-auto"
+              className="text-red-500 border-red-500/20 hover:bg-red-500/5 hover:text-red-600 gap-1.5 cursor-pointer w-full sm:w-auto justify-center"
             >
               <Trash2 className="h-4 w-4" />
               Remove Profile
@@ -170,11 +228,11 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
               Weekly Goal Progress
             </CardTitle>
             <CardDescription className="text-xs">
-              Completion rating of the 24 exercises split routine
+              Completion rating of the scheduled split routine
             </CardDescription>
           </div>
           <span className="text-xs font-bold text-muted-foreground">
-            {weeklyCompletedCount} / 24 Completed
+            {weeklyCompletedCount} / {weeklyTotalCount} Completed
           </span>
         </CardHeader>
         <CardContent className="p-0">

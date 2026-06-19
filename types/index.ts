@@ -6,6 +6,8 @@ export interface UserProfile {
   streak: number;
   bestStreak?: number; // All-time highest streak
   completedCount: number;
+  totalWorkouts?: number; // Total number of scheduled workouts
+  weeklyProgress?: number; // Weekly progress percentage (0-100)
 }
 
 export interface WorkoutExercise {

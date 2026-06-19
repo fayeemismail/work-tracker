@@ -13,6 +13,7 @@ import {
   getUserWorkoutHistory,
   cleanOldHistoryLogs,
   deleteMuscleGroupExercises,
+  syncUserProfileStats,
 } from "@/services/db";
 
 interface WorkoutContextType {
@@ -109,12 +110,55 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     return { todayCompletedCount: completed, todayTotalCount: total, todayProgress: progress };
   }, [todayWorkout]);
 
-  // Calculate weekly stats
+  // Calculate weekly stats based on day-averaged completed muscle groups
   const { weeklyCompletedCount, weeklyProgress } = useMemo(() => {
-    const total = workouts.length;
     const completed = workouts.filter((w) => w.completed).length;
-    const progress = total > 0 ? Math.round((completed / total) * 100) : 0;
-    return { weeklyCompletedCount: completed, weeklyProgress: progress };
+    
+    const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const dayProgresses: Record<string, number> = {};
+    
+    days.forEach((day) => {
+      if (day === "Sunday") {
+        dayProgresses[day] = 100; // Sunday is rest day (100% complete)
+        return;
+      }
+      
+      const dayWorkouts = workouts.filter((w) => w.day === day);
+      if (dayWorkouts.length === 0) {
+        dayProgresses[day] = 100; // Counts as rest day (100% complete)
+        return;
+      }
+      
+      // Group workouts by muscle group
+      const muscleGroups: Record<string, boolean> = {};
+      dayWorkouts.forEach((w) => {
+        if (w.muscle) {
+          if (muscleGroups[w.muscle] === undefined) {
+            muscleGroups[w.muscle] = true;
+          }
+          if (!w.completed) {
+            muscleGroups[w.muscle] = false;
+          }
+        }
+      });
+      
+      const uniqueMuscles = Object.keys(muscleGroups);
+      if (uniqueMuscles.length === 0) {
+        dayProgresses[day] = 100;
+        return;
+      }
+      
+      const completedMusclesCount = uniqueMuscles.filter((m) => muscleGroups[m]).length;
+      
+      // Each day's progress has a denominator of 2, capped at 100%
+      const progress = Math.min(100, Math.round((completedMusclesCount / 2) * 100));
+      dayProgresses[day] = progress;
+    });
+    
+    const sum = Object.values(dayProgresses).reduce((acc, val) => acc + val, 0);
+    const weeklyProgressVal = Math.round(sum / 7);
+    
+    return { weeklyCompletedCount: completed, weeklyProgress: weeklyProgressVal };
   }, [workouts]);
 
   // Calculate Streak
@@ -149,16 +193,28 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     return activeStreak;
   }, [workouts, todayName]);
 
-  // Sync calculated streak to the DB/User Profile
+  // Sync calculated streak, completedCount, totalWorkouts, and weeklyProgress to the DB/User Profile
   useEffect(() => {
     if (user && profile && workouts.length > 0) {
-      if (profile.streak !== streak) {
-        updateUserStreak(user.uid, streak).then(() => {
+      const currentCompleted = workouts.filter((w) => w.completed).length;
+      const currentTotal = workouts.length;
+      if (
+        profile.streak !== streak ||
+        profile.completedCount !== currentCompleted ||
+        profile.totalWorkouts !== currentTotal ||
+        profile.weeklyProgress !== weeklyProgress
+      ) {
+        syncUserProfileStats(user.uid, {
+          streak,
+          completedCount: currentCompleted,
+          totalWorkouts: currentTotal,
+          weeklyProgress,
+        }).then(() => {
           refreshProfile();
         });
       }
     }
-  }, [streak, user, profile, workouts, refreshProfile]);
+  }, [streak, user, profile, workouts, weeklyProgress, refreshProfile]);
 
   // Backwards compatibility fallback toggle for the whole exercise
   const toggleExercise = async (exerciseId: string) => {

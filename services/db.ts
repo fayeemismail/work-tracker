@@ -435,21 +435,39 @@ export async function deleteMuscleGroupExercises(userId: string, day: string, mu
 export async function deleteUserProfileAndData(userId: string) {
   if (!isFirebaseConfigured) {
     if (typeof window !== "undefined") {
-      localStorage.removeItem(`pulse_workouts_${userId}`);
       const localUsers = getLocalUsers();
+      const targetUser = localUsers.find((u) => u.uid === userId);
+      if (targetUser?.email) {
+        const email = targetUser.email.toLowerCase();
+        if (["faheemmuhammed703@gmail.com", "faheemmhuhammed703@gmail.com", "adminfatracker@gmail.com"].includes(email)) {
+          throw new Error("Cannot delete an administrator account.");
+        }
+      }
+      localStorage.removeItem(`pulse_workouts_${userId}`);
       saveLocalUsers(localUsers.filter((u) => u.uid !== userId));
     }
     return;
   }
 
   const userRef = doc(db, "users", userId);
+  const snap = await getDoc(userRef);
+  if (snap.exists()) {
+    const profile = snap.data() as UserProfile;
+    if (profile.email) {
+      const email = profile.email.toLowerCase();
+      if (["faheemmuhammed703@gmail.com", "faheemmhuhammed703@gmail.com", "adminfatracker@gmail.com"].includes(email)) {
+        throw new Error("Cannot delete an administrator account.");
+      }
+    }
+  }
+
   await deleteDoc(userRef);
 
   const q = query(collection(db, "workouts"), where("userId", "==", userId));
-  const snap = await getDocs(q);
+  const snapWorkouts = await getDocs(q);
   
   const batch = writeBatch(db);
-  snap.forEach((doc) => {
+  snapWorkouts.forEach((doc) => {
     batch.delete(doc.ref);
   });
   await batch.commit();
@@ -491,6 +509,54 @@ export async function updateUserStreak(userId: string, streak: number) {
     await updateDoc(userRef, { streak, bestStreak: best });
   } else {
     await updateDoc(userRef, { streak, bestStreak: streak });
+  }
+}
+
+export async function syncUserProfileStats(
+  userId: string,
+  stats: { streak: number; completedCount: number; totalWorkouts: number; weeklyProgress: number }
+) {
+  if (!isFirebaseConfigured) {
+    const localUsers = getLocalUsers();
+    const updatedUsers = localUsers.map((u) => {
+      if (u.uid === userId) {
+        const best = Math.max(u.bestStreak || 0, stats.streak);
+        return {
+          ...u,
+          streak: stats.streak,
+          bestStreak: best,
+          completedCount: stats.completedCount,
+          totalWorkouts: stats.totalWorkouts,
+          weeklyProgress: stats.weeklyProgress,
+        };
+      }
+      return u;
+    });
+    saveLocalUsers(updatedUsers);
+    return;
+  }
+
+  const userRef = doc(db, "users", userId);
+  const snap = await getDoc(userRef);
+  if (snap.exists()) {
+    const data = snap.data() as UserProfile;
+    const currentBest = data.bestStreak || 0;
+    const best = Math.max(currentBest, stats.streak);
+    await updateDoc(userRef, {
+      streak: stats.streak,
+      bestStreak: best,
+      completedCount: stats.completedCount,
+      totalWorkouts: stats.totalWorkouts,
+      weeklyProgress: stats.weeklyProgress,
+    });
+  } else {
+    await updateDoc(userRef, {
+      streak: stats.streak,
+      bestStreak: stats.streak,
+      completedCount: stats.completedCount,
+      totalWorkouts: stats.totalWorkouts,
+      weeklyProgress: stats.weeklyProgress,
+    });
   }
 }
 

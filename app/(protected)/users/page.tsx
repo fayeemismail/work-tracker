@@ -10,7 +10,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useConfirm } from "@/context/ConfirmContext";
 import { useToast } from "@/context/ToastContext";
 import { Button } from "@/components/ui/Button";
-import { cleanupStaleUsers } from "@/app/actions/admin";
+import { cleanupStaleUsers, isEmailAdmin } from "@/app/actions/admin";
 
 export default function Community() {
   const { user: currentUser } = useAuth();
@@ -20,8 +20,13 @@ export default function Community() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  const isAdmin = currentUser?.email?.toLowerCase() === process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase();
+  useEffect(() => {
+    if (currentUser?.email) {
+      isEmailAdmin(currentUser.email).then(setIsAdmin);
+    }
+  }, [currentUser]);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -66,9 +71,10 @@ export default function Community() {
     }
   };
 
-  // Filter users based on search query
+  // Filter users based on search query and exclude adminfatracker@gmail.com
   const filteredUsers = users.filter((u) =>
-    u.name?.toLowerCase().includes(searchQuery.toLowerCase())
+    u.name?.toLowerCase().includes(searchQuery.toLowerCase()) &&
+    u.email?.toLowerCase() !== "adminfatracker@gmail.com"
   );
 
   return (

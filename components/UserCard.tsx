@@ -22,12 +22,12 @@ export function UserCard({ profile }: UserCardProps) {
         .slice(0, 2)
     : "U";
 
-  // Calculate completion percentage based on total exercises of the week (24 exercises)
-  // Capped at 100% for the active cycle, resets/loops if they complete more than 24
-  const completionPercentage = Math.min(
-    100,
-    Math.round(((profile.completedCount || 0) % 24) * (100 / 24))
-  );
+  // Use the day-averaged weekly progress synced directly on the profile, fallback to estimation if not synced
+  const completionPercentage = profile.weeklyProgress !== undefined
+    ? profile.weeklyProgress
+    : (profile.totalWorkouts || 24) > 0
+    ? Math.min(100, Math.round(((profile.completedCount || 0) / (profile.totalWorkouts || 24)) * 100))
+    : 0;
 
   return (
     <Link href={`/users/${profile.uid}`} className="block group">
