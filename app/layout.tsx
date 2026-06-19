@@ -5,6 +5,7 @@ import Script from "next/script";
 import { AuthProvider } from "@/context/AuthContext";
 import { WorkoutProvider } from "@/context/WorkoutContext";
 import { ToastProvider } from "@/context/ToastContext";
+import { ConfirmProvider } from "@/context/ConfirmContext";
 import { Navbar } from "@/components/Navbar";
 
 const geistSans = Geist({
@@ -51,14 +52,16 @@ export default function RootLayout({
           }}
         />
         <ToastProvider>
-          <AuthProvider>
-            <WorkoutProvider>
-              <Navbar />
-              <div className="flex-1 flex flex-col pb-16 md:pb-0">
-                {children}
-              </div>
-            </WorkoutProvider>
-          </AuthProvider>
+          <ConfirmProvider>
+            <AuthProvider>
+              <WorkoutProvider>
+                <Navbar />
+                <div className="flex-1 flex flex-col pb-16 md:pb-0">
+                  {children}
+                </div>
+              </WorkoutProvider>
+            </AuthProvider>
+          </ConfirmProvider>
         </ToastProvider>
       </body>
     </html>

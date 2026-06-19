@@ -81,3 +81,36 @@ export async function cleanupStaleUsers(): Promise<{ success: boolean; deletedCo
     };
   }
 }
+
+export async function deleteUserAccountAdmin(uid: string): Promise<{ success: boolean; message: string }> {
+  initAdmin();
+  if (getApps().length === 0) {
+    return {
+      success: false,
+      message: "Firebase Admin is not configured. Falling back to client-side deletion.",
+    };
+  }
+
+  try {
+    const db = getFirestore();
+    
+    // Delete workouts from Firestore
+    const workoutsSnap = await db.collection("workouts").where("userId", "==", uid).get();
+    const batch = db.batch();
+    workoutsSnap.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+
+    // Delete user profile from Firestore
+    await db.collection("users").doc(uid).delete();
+
+    // Delete from Firebase Auth
+    await getAuth().deleteUser(uid);
+
+    return { success: true, message: "User deleted successfully via Admin SDK." };
+  } catch (error: any) {
+    console.error("Admin failed to delete user:", error);
+    return { success: false, message: error.message || "Failed to delete user." };
+  }
+}

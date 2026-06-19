@@ -6,7 +6,9 @@ import { ExerciseCheckbox } from "./ExerciseCheckbox";
 import { WorkoutExercise } from "@/types";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useWorkout } from "@/context/WorkoutContext";
-import { Plus, Minus } from "lucide-react";
+import { useConfirm } from "@/context/ConfirmContext";
+import { PREDEFINED_EXERCISES } from "@/lib/constants";
+import { Plus, Minus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
 interface WorkoutCardProps {
@@ -17,9 +19,11 @@ interface WorkoutCardProps {
 }
 
 export function WorkoutCard({ day, muscle, exercises, disabled }: WorkoutCardProps) {
-  const { addCustomExercise } = useWorkout();
+  const { addCustomExercise, deleteMuscleGroup } = useWorkout();
+  const { confirm } = useConfirm();
   const [isAdding, setIsAdding] = useState(false);
-  const [newExerciseName, setNewExerciseName] = useState("");
+  const [selectedPredefined, setSelectedPredefined] = useState<string[]>([]);
+  const [customExerciseName, setCustomExerciseName] = useState("");
   const [newSets, setNewSets] = useState(3);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -29,28 +33,52 @@ export function WorkoutCard({ day, muscle, exercises, disabled }: WorkoutCardPro
     return Math.round((completed / exercises.length) * 100);
   }, [exercises]);
 
-  const handleAddCustomExercise = async (e: React.FormEvent) => {
+  const handleAddExercises = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newExerciseName.trim()) return;
+    const exercisesToAdd: string[] = [...selectedPredefined];
+    if (customExerciseName.trim()) {
+      exercisesToAdd.push(customExerciseName.trim());
+    }
+
+    if (exercisesToAdd.length === 0) return;
 
     setIsSubmitting(true);
     try {
-      await addCustomExercise(day, muscle, newExerciseName.trim(), newSets);
-      setNewExerciseName("");
+      for (const name of exercisesToAdd) {
+        await addCustomExercise(day, muscle, name, newSets);
+      }
+      setSelectedPredefined([]);
+      setCustomExerciseName("");
       setNewSets(3);
       setIsAdding(false);
     } catch (err) {
-      console.error("Error adding custom exercise:", err);
+      console.error("Error adding exercises:", err);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleCancel = () => {
-    setNewExerciseName("");
+    setSelectedPredefined([]);
+    setCustomExerciseName("");
     setNewSets(3);
     setIsAdding(false);
   };
+
+  const handleDeleteCategory = async () => {
+    if (disabled) return;
+    const isConfirmed = await confirm({
+      title: `Delete ${muscle}`,
+      message: `Are you sure you want to permanently remove the entire "${muscle}" muscle group and all its ${exercises.length} exercises from ${day}?`,
+      confirmText: "Delete All",
+      variant: "danger",
+    });
+    if (isConfirmed) {
+      await deleteMuscleGroup(day, muscle);
+    }
+  };
+
+  const options = PREDEFINED_EXERCISES[muscle] || [];
 
   return (
     <Card className="flex flex-col gap-4 overflow-hidden border border-border bg-card">
@@ -63,10 +91,21 @@ export function WorkoutCard({ day, muscle, exercises, disabled }: WorkoutCardPro
             {exercises.length} Exercises
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground bg-secondary px-2.5 py-1 rounded-full border border-border">
+        <div className="flex items-center gap-2.5">
+          <span className="text-xs font-medium text-muted-foreground bg-secondary/80 px-2.5 py-1 rounded-full border border-border">
             {progress}% Completed
           </span>
+          {!disabled && (
+            <button
+              type="button"
+              onClick={handleDeleteCategory}
+              className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+              title={`Delete entire ${muscle} category`}
+              aria-label={`Delete entire ${muscle} category`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </CardHeader>
       
@@ -93,17 +132,53 @@ export function WorkoutCard({ day, muscle, exercises, disabled }: WorkoutCardPro
         )}
 
         {!disabled && isAdding && (
-          <form onSubmit={handleAddCustomExercise} className="mt-2 flex flex-col gap-3 p-3.5 rounded-xl border border-border bg-muted/10 animate-fade-in">
+          <form onSubmit={handleAddExercises} className="mt-2 flex flex-col gap-3.5 p-3.5 rounded-xl border border-border bg-muted/10 animate-fade-in">
+            
+            {options.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Select Predefined Exercises
+                </label>
+                <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2 border border-border rounded-xl bg-card">
+                  {options.map((opt) => {
+                    const isSelected = selectedPredefined.includes(opt);
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPredefined((prev) =>
+                            prev.includes(opt)
+                              ? prev.filter((o) => o !== opt)
+                              : [...prev, opt]
+                          );
+                        }}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all duration-150 cursor-pointer ${
+                          isSelected
+                            ? "bg-primary text-primary-foreground border-primary font-semibold shadow-xs"
+                            : "border-border bg-secondary hover:border-muted-foreground/30 text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {opt}
+                        {isSelected && <span className="ml-1 text-[10px]">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Exercise Name</label>
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                {options.length > 0 ? "Or Enter Custom Exercise Name" : "Exercise Name"}
+              </label>
               <input
                 type="text"
-                required
                 placeholder="e.g. Incline Bench Press"
-                value={newExerciseName}
-                onChange={(e) => setNewExerciseName(e.target.value)}
+                value={customExerciseName}
+                onChange={(e) => setCustomExerciseName(e.target.value)}
                 className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-card placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring text-foreground"
-                autoFocus
+                required={selectedPredefined.length === 0}
               />
             </div>
 

@@ -14,7 +14,8 @@ import {
 } from "firebase/auth";
 import { auth, isFirebaseConfigured } from "@/lib/firebase";
 import { UserProfile } from "@/types";
-import { createUserProfile, getUserProfile, getAllUserProfiles, deleteUserProfileAndData } from "@/services/db";
+import { createUserProfile, getUserProfile, getAllUserProfiles, deleteUserProfileAndData, migrateLocalDataToFirebase } from "@/services/db";
+import { deleteUserAccountAdmin } from "@/app/actions/admin";
 
 interface AuthContextType {
   user: User | null;
@@ -92,6 +93,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
+  // Helper to find any previous local user session UID
+  const getPrevDemoUid = () => {
+    if (typeof window === "undefined") return null;
+    let prevDemoUid = localStorage.getItem("pulse_demo_logged_in_uid");
+    if (!prevDemoUid) {
+      // Look for any pulse_workouts_ key to extract a local user ID
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("pulse_workouts_")) {
+          prevDemoUid = key.replace("pulse_workouts_", "");
+          break;
+        }
+      }
+    }
+    return prevDemoUid;
+  };
+
   const signup = async (email: string, password: string, name: string) => {
     if (!isFirebaseConfigured) {
       if (email.toLowerCase() === process.env.NEXT_PUBLIC_ADMIN_EMAIL?.toLowerCase() && password !== process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
@@ -111,10 +129,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const prevDemoUid = getPrevDemoUid();
+
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const fireUser = userCredential.user;
     await updateProfile(fireUser, { displayName: name });
-    const userProf = await createUserProfile(fireUser.uid, name, email);
+    const userProf = await createUserProfile(fireUser.uid, name, email, prevDemoUid || undefined);
+    
+    if (prevDemoUid) {
+      localStorage.removeItem("pulse_demo_logged_in_uid");
+    }
+
     setProfile(userProf);
     setUser(fireUser);
   };
@@ -145,8 +170,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const prevDemoUid = getPrevDemoUid();
+
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const fireUser = userCredential.user;
+    
+    if (prevDemoUid) {
+      await migrateLocalDataToFirebase(prevDemoUid, fireUser.uid);
+      localStorage.removeItem("pulse_demo_logged_in_uid");
+    }
+
     const userProf = await getUserProfile(fireUser.uid);
     setProfile(userProf);
     setUser(fireUser);
@@ -169,6 +202,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const prevDemoUid = getPrevDemoUid();
+
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(auth, provider);
     const fireUser = result.user;
@@ -178,12 +213,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const userProf = await createUserProfile(
         fireUser.uid,
         fireUser.displayName || "Google Trainer",
-        fireUser.email || "google@example.com"
+        fireUser.email || "google@example.com",
+        prevDemoUid || undefined
       );
       setProfile(userProf);
     } else {
-      setProfile(existingProfile);
+      if (prevDemoUid) {
+        await migrateLocalDataToFirebase(prevDemoUid, fireUser.uid);
+      }
+      const updatedProfile = await getUserProfile(fireUser.uid);
+      setProfile(updatedProfile);
     }
+
+    if (prevDemoUid) {
+      localStorage.removeItem("pulse_demo_logged_in_uid");
+    }
+
     setUser(fireUser);
   };
 
@@ -203,16 +248,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     
     const userId = user.uid;
-    // 1. Delete data from DB
-    await deleteUserProfileAndData(userId);
 
-    // 2. Delete user from auth
     if (isFirebaseConfigured) {
-      const currentUser = auth.currentUser;
-      if (currentUser) {
-        await deleteUser(currentUser);
+      // Try server-side admin delete first to bypass requires-recent-login security restriction
+      const res = await deleteUserAccountAdmin(userId);
+      
+      if (!res.success) {
+        // Fallback: Client-side deletion (which requires recent login)
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          const lastSignIn = currentUser.metadata.lastSignInTime ? new Date(currentUser.metadata.lastSignInTime).getTime() : 0;
+          const now = new Date().getTime();
+          if (now - lastSignIn > 5 * 60 * 1000) {
+            const err = new Error("Requires recent login");
+            (err as any).code = "auth/requires-recent-login";
+            throw err;
+          }
+
+          // 1. Delete data from DB
+          await deleteUserProfileAndData(userId);
+          // 2. Delete user from auth
+          await deleteUser(currentUser);
+        }
       }
     } else {
+      // 1. Delete data from DB
+      await deleteUserProfileAndData(userId);
       localStorage.removeItem("pulse_demo_logged_in_uid");
     }
 

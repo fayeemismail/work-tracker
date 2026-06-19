@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useConfirm } from "@/context/ConfirmContext";
 import { ProfileCard } from "@/components/ProfileCard";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -13,6 +14,7 @@ import { clearDatabaseCache } from "@/services/db";
 export default function ProfilePage() {
   const { profile, deleteAccount, logout } = useAuth();
   const { success, error, info } = useToast();
+  const { confirm } = useConfirm();
   const router = useRouter();
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -20,7 +22,13 @@ export default function ProfilePage() {
   const [clearingCache, setClearingCache] = useState(false);
 
   const handleClearCache = async () => {
-    if (window.confirm("Are you sure you want to clear the database cache and offline storage? You will be signed out.")) {
+    const isConfirmed = await confirm({
+      title: "Clear Database Cache",
+      message: "Are you sure you want to clear the database cache and offline storage? You will be signed out.",
+      confirmText: "Clear & Sign Out",
+      variant: "danger",
+    });
+    if (isConfirmed) {
       setClearingCache(true);
       try {
         await clearDatabaseCache();

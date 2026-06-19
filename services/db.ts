@@ -16,7 +16,7 @@ import {
   getDocFromServer,
 } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "@/lib/firebase";
-import { UserProfile, WorkoutExercise } from "@/types";
+import { UserProfile, WorkoutExercise, WorkoutHistoryLog } from "@/types";
 import { DEFAULT_WORKOUT_PLAN } from "@/lib/constants";
 
 // --- SEED DATA FOR DEMO MODE ---
@@ -27,6 +27,7 @@ const MOCK_PROFILES: UserProfile[] = [
     email: "arnold@goldgym.com",
     createdAt: new Date().toISOString(),
     streak: 15,
+    bestStreak: 25,
     completedCount: 64,
   },
   {
@@ -35,6 +36,7 @@ const MOCK_PROFILES: UserProfile[] = [
     email: "serena@tennis.org",
     createdAt: new Date().toISOString(),
     streak: 8,
+    bestStreak: 12,
     completedCount: 36,
   },
   {
@@ -43,6 +45,7 @@ const MOCK_PROFILES: UserProfile[] = [
     email: "youcantseeme@wwe.com",
     createdAt: new Date().toISOString(),
     streak: 22,
+    bestStreak: 30,
     completedCount: 88,
   },
 ];
@@ -78,12 +81,18 @@ function getLocalWorkouts(userId: string): WorkoutExercise[] {
       sets: item.sets,
       completed: false,
       completedSets: new Array(item.sets).fill(false), // Set completion status for each set
+      weights: Array.from({ length: item.sets }).map((_, sIdx) => 15 + sIdx * 5), // Initialize weights starting at 15kg increasing by 5kg
       updatedAt: new Date().toISOString(),
     }));
     localStorage.setItem(`pulse_workouts_${userId}`, JSON.stringify(initialWorkouts));
     return initialWorkouts;
   }
-  return JSON.parse(stored);
+  const parsed = JSON.parse(stored) as WorkoutExercise[];
+  return parsed.map((w) => ({
+    ...w,
+    completedSets: w.completedSets || new Array(w.sets).fill(false),
+    weights: w.weights || Array.from({ length: w.sets }).map((_, sIdx) => 15 + sIdx * 5),
+  }));
 }
 
 function saveLocalWorkouts(userId: string, workouts: WorkoutExercise[]) {
@@ -94,7 +103,12 @@ function saveLocalWorkouts(userId: string, workouts: WorkoutExercise[]) {
 
 // --- CORE SERVICES ---
 
-export async function createUserProfile(uid: string, name: string, email: string): Promise<UserProfile> {
+export async function createUserProfile(
+  uid: string,
+  name: string,
+  email: string,
+  sourceUserIdForMigration?: string
+): Promise<UserProfile> {
   if (!isFirebaseConfigured) {
     const profile: UserProfile = {
       uid,
@@ -102,6 +116,7 @@ export async function createUserProfile(uid: string, name: string, email: string
       email,
       createdAt: new Date().toISOString(),
       streak: 0,
+      bestStreak: 0,
       completedCount: 0,
     };
     const localUsers = getLocalUsers();
@@ -120,10 +135,17 @@ export async function createUserProfile(uid: string, name: string, email: string
     email,
     createdAt: new Date().toISOString(),
     streak: 0,
+    bestStreak: 0,
     completedCount: 0,
   };
   await setDoc(userRef, profile);
-  await initializeUserWorkouts(uid);
+  
+  if (sourceUserIdForMigration) {
+    await migrateLocalDataToFirebase(sourceUserIdForMigration, uid);
+  } else {
+    await initializeUserWorkouts(uid);
+  }
+
   return profile;
 }
 
@@ -135,7 +157,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   }
 
   const userRef = doc(db, "users", uid);
-  const snap = await getDocFromServer(userRef);
+  const snap = await getDoc(userRef);
   if (snap.exists()) {
     return snap.data() as UserProfile;
   }
@@ -149,7 +171,7 @@ export async function getAllUserProfiles(): Promise<UserProfile[]> {
   }
 
   const usersColl = collection(db, "users");
-  const snap = await getDocsFromServer(usersColl);
+  const snap = await getDocs(usersColl);
   const users: UserProfile[] = [];
   snap.forEach((doc) => {
     users.push(doc.data() as UserProfile);
@@ -178,6 +200,7 @@ export async function initializeUserWorkouts(userId: string) {
       sets: item.sets,
       completed: false,
       completedSets: new Array(item.sets).fill(false), // Initialize with false flags
+      weights: Array.from({ length: item.sets }).map((_, sIdx) => 15 + sIdx * 5), // Initialize weights starting at 15kg increasing by 5kg
       updatedAt: new Date().toISOString(),
     };
     batch.set(workoutRef, workout);
@@ -191,10 +214,16 @@ export async function getUserWorkouts(userId: string): Promise<WorkoutExercise[]
   }
 
   const q = query(collection(db, "workouts"), where("userId", "==", userId));
-  const snap = await getDocsFromServer(q);
+  const snap = await getDocs(q);
   const workouts: WorkoutExercise[] = [];
   snap.forEach((doc) => {
-    workouts.push({ id: doc.id, ...doc.data() } as WorkoutExercise);
+    const data = doc.data();
+    workouts.push({
+      id: doc.id,
+      ...data,
+      completedSets: data.completedSets || new Array(data.sets).fill(false),
+      weights: data.weights || Array.from({ length: data.sets }).map((_, sIdx) => 15 + sIdx * 5),
+    } as WorkoutExercise);
   });
 
   if (workouts.length === 0) {
@@ -208,7 +237,8 @@ export async function updateWorkoutSets(
   userId: string,
   exerciseId: string,
   completedSets: boolean[],
-  sets: number
+  sets: number,
+  weights?: number[]
 ) {
   const isCompleted = completedSets.length > 0 && completedSets.every((s) => s === true);
 
@@ -225,6 +255,7 @@ export async function updateWorkoutSets(
       sets,
       completedSets,
       completed: isCompleted,
+      weights: weights || target.weights || Array.from({ length: sets }).map((_, sIdx) => 15 + sIdx * 5),
       updatedAt: new Date().toISOString(),
     };
     saveLocalWorkouts(userId, workoutsList);
@@ -251,12 +282,17 @@ export async function updateWorkoutSets(
   const data = exerciseSnap.data() as WorkoutExercise;
   const wasCompleted = data.completed;
 
-  await updateDoc(exerciseRef, {
+  const updateData: any = {
     sets,
     completedSets,
     completed: isCompleted,
     updatedAt: new Date().toISOString(),
-  });
+  };
+  if (weights) {
+    updateData.weights = weights;
+  }
+
+  await updateDoc(exerciseRef, updateData);
 
   if (wasCompleted !== isCompleted) {
     const userRef = doc(db, "users", userId);
@@ -274,6 +310,7 @@ export async function addCustomWorkoutExercise(
   sets: number
 ): Promise<WorkoutExercise> {
   const completedSets = new Array(sets).fill(false);
+  const weights = Array.from({ length: sets }).map((_, sIdx) => 15 + sIdx * 5);
   const workout: WorkoutExercise = {
     userId,
     day,
@@ -282,6 +319,7 @@ export async function addCustomWorkoutExercise(
     sets,
     completed: false,
     completedSets,
+    weights,
     updatedAt: new Date().toISOString(),
   };
 
@@ -341,6 +379,59 @@ export async function deleteWorkoutExercise(userId: string, exerciseId: string) 
   }
 }
 
+export async function deleteMuscleGroupExercises(userId: string, day: string, muscle: string) {
+  if (!isFirebaseConfigured) {
+    const workoutsList = getLocalWorkouts(userId);
+    const targets = workoutsList.filter((w) => w.day === day && w.muscle === muscle);
+    if (targets.length === 0) return;
+
+    const completedCountToDelete = targets.filter((w) => w.completed).length;
+    const updated = workoutsList.filter((w) => !(w.day === day && w.muscle === muscle));
+    saveLocalWorkouts(userId, updated);
+
+    if (completedCountToDelete > 0) {
+      const localUsers = getLocalUsers();
+      const updatedUsers = localUsers.map((u) =>
+        u.uid === userId
+          ? {
+              ...u,
+              completedCount: Math.max(0, (u.completedCount || 0) - completedCountToDelete),
+            }
+          : u
+      );
+      saveLocalUsers(updatedUsers);
+    }
+    return;
+  }
+
+  const q = query(
+    collection(db, "workouts"),
+    where("userId", "==", userId),
+    where("day", "==", day),
+    where("muscle", "==", muscle)
+  );
+  const snap = await getDocs(q);
+  const batch = writeBatch(db);
+  let completedCountToDelete = 0;
+
+  snap.forEach((doc) => {
+    const data = doc.data() as WorkoutExercise;
+    if (data.completed) {
+      completedCountToDelete++;
+    }
+    batch.delete(doc.ref);
+  });
+
+  await batch.commit();
+
+  if (completedCountToDelete > 0) {
+    const userRef = doc(db, "users", userId);
+    await updateDoc(userRef, {
+      completedCount: increment(-completedCountToDelete),
+    });
+  }
+}
+
 export async function deleteUserProfileAndData(userId: string) {
   if (!isFirebaseConfigured) {
     if (typeof window !== "undefined") {
@@ -380,15 +471,27 @@ export async function toggleWorkoutExercise(
 export async function updateUserStreak(userId: string, streak: number) {
   if (!isFirebaseConfigured) {
     const localUsers = getLocalUsers();
-    const updatedUsers = localUsers.map((u) =>
-      u.uid === userId ? { ...u, streak } : u
-    );
+    const updatedUsers = localUsers.map((u) => {
+      if (u.uid === userId) {
+        const best = Math.max(u.bestStreak || 0, streak);
+        return { ...u, streak, bestStreak: best };
+      }
+      return u;
+    });
     saveLocalUsers(updatedUsers);
     return;
   }
 
   const userRef = doc(db, "users", userId);
-  await updateDoc(userRef, { streak });
+  const snap = await getDoc(userRef);
+  if (snap.exists()) {
+    const data = snap.data() as UserProfile;
+    const currentBest = data.bestStreak || 0;
+    const best = Math.max(currentBest, streak);
+    await updateDoc(userRef, { streak, bestStreak: best });
+  } else {
+    await updateDoc(userRef, { streak, bestStreak: streak });
+  }
 }
 
 export async function clearDatabaseCache() {
@@ -415,3 +518,176 @@ export async function clearDatabaseCache() {
     keysToRemove.forEach((key) => localStorage.removeItem(key));
   }
 }
+
+export async function migrateLocalDataToFirebase(localUserId: string, firebaseUserId: string) {
+  if (typeof window === "undefined" || !isFirebaseConfigured || !db) return;
+
+  try {
+    const stored = localStorage.getItem(`pulse_workouts_${localUserId}`);
+    if (!stored) return;
+
+    const localWorkouts = JSON.parse(stored) as WorkoutExercise[];
+    if (localWorkouts.length === 0) return;
+
+    const batch = writeBatch(db);
+    localWorkouts.forEach((item) => {
+      const cleanMuscle = item.muscle.replace(/[^a-zA-Z0-9]/g, "");
+      const cleanExercise = item.exercise.replace(/[^a-zA-Z0-9]/g, "");
+      const docId = `${firebaseUserId}_${item.day}_${cleanMuscle}_${cleanExercise}`;
+      const workoutRef = doc(db, "workouts", docId);
+
+      const workout: WorkoutExercise = {
+        userId: firebaseUserId,
+        day: item.day,
+        muscle: item.muscle,
+        exercise: item.exercise,
+        sets: item.sets,
+        completed: item.completed,
+        completedSets: item.completedSets || new Array(item.sets).fill(false),
+        weights: item.weights || Array.from({ length: item.sets }).map((_, sIdx) => 15 + sIdx * 5),
+        updatedAt: item.updatedAt || new Date().toISOString(),
+      };
+      batch.set(workoutRef, workout);
+    });
+    await batch.commit();
+
+    const localUsersStored = localStorage.getItem("pulse_users");
+    if (localUsersStored) {
+      const localUsers = JSON.parse(localUsersStored) as UserProfile[];
+      const localProfile = localUsers.find((u) => u.uid === localUserId);
+      if (localProfile) {
+        const userRef = doc(db, "users", firebaseUserId);
+        await updateDoc(userRef, {
+          streak: localProfile.streak || 0,
+          bestStreak: localProfile.bestStreak || localProfile.streak || 0,
+          completedCount: localProfile.completedCount || 0,
+        });
+      }
+    }
+
+    localStorage.removeItem(`pulse_workouts_${localUserId}`);
+  } catch (err) {
+    console.error("Failed to migrate local workouts to Firebase:", err);
+  }
+}
+
+function getLocalDateString() {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const date = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${date}`;
+}
+
+export async function logWorkoutHistory(
+  userId: string,
+  workout: WorkoutExercise,
+  completedSets: boolean[],
+  sets: number,
+  weights: number[]
+) {
+  const dateStr = getLocalDateString();
+  const cleanMuscle = workout.muscle.replace(/[^a-zA-Z0-9]/g, "");
+  const cleanExercise = workout.exercise.replace(/[^a-zA-Z0-9]/g, "");
+  const docId = `${userId}_${dateStr}_${cleanMuscle}_${cleanExercise}`;
+  const isCompleted = completedSets.length > 0 && completedSets.every((s) => s === true);
+
+  const historyItem: WorkoutHistoryLog = {
+    userId,
+    date: dateStr,
+    muscle: workout.muscle,
+    exercise: workout.exercise,
+    sets,
+    completedSets,
+    weights,
+    completed: isCompleted,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (!isFirebaseConfigured) {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem(`pulse_history_${userId}`);
+      let history: WorkoutHistoryLog[] = [];
+      if (stored) {
+        history = JSON.parse(stored);
+      }
+      const existingIdx = history.findIndex(
+        (h) => h.date === dateStr && h.muscle === workout.muscle && h.exercise === workout.exercise
+      );
+      if (existingIdx !== -1) {
+        history[existingIdx] = { ...history[existingIdx], ...historyItem };
+      } else {
+        history.push(historyItem);
+      }
+      localStorage.setItem(`pulse_history_${userId}`, JSON.stringify(history));
+    }
+    return;
+  }
+
+  const historyRef = doc(db, "workout_history", docId);
+  await setDoc(historyRef, historyItem, { merge: true });
+}
+
+export async function getUserWorkoutHistory(userId: string): Promise<WorkoutHistoryLog[]> {
+  if (!isFirebaseConfigured) {
+    if (typeof window === "undefined") return [];
+    const stored = localStorage.getItem(`pulse_history_${userId}`);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored) as WorkoutHistoryLog[];
+    return parsed.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  const q = query(collection(db, "workout_history"), where("userId", "==", userId));
+  const snap = await getDocs(q);
+  const history: WorkoutHistoryLog[] = [];
+  snap.forEach((doc) => {
+    history.push({ id: doc.id, ...doc.data() } as WorkoutHistoryLog);
+  });
+  return history.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+}
+
+export async function cleanOldHistoryLogs(userId: string) {
+  // 1. Clean local storage history
+  if (typeof window !== "undefined") {
+    const stored = localStorage.getItem(`pulse_history_${userId}`);
+    if (stored) {
+      try {
+        const history = JSON.parse(stored) as WorkoutHistoryLog[];
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const dateLimit = thirtyDaysAgo.toISOString();
+        const filtered = history.filter((item) => item.timestamp >= dateLimit);
+        localStorage.setItem(`pulse_history_${userId}`, JSON.stringify(filtered));
+      } catch (e) {
+        console.error("Failed to clean local history:", e);
+      }
+    }
+  }
+
+  // 2. Clean Firestore history logs
+  if (!isFirebaseConfigured || !db) return;
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const dateLimit = thirtyDaysAgo.toISOString();
+
+    const q = query(collection(db, "workout_history"), where("userId", "==", userId));
+    const snap = await getDocs(q);
+    const batch = writeBatch(db);
+    let count = 0;
+    snap.forEach((doc) => {
+      const data = doc.data() as WorkoutHistoryLog;
+      if (data.timestamp && data.timestamp < dateLimit) {
+        batch.delete(doc.ref);
+        count++;
+      }
+    });
+    if (count > 0) {
+      await batch.commit();
+      console.log(`Cleaned up ${count} expired history logs older than 30 days.`);
+    }
+  } catch (err) {
+    console.error("Failed to clean old history logs:", err);
+  }
+}
+

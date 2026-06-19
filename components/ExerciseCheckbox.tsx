@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useWorkout } from "@/context/WorkoutContext";
+import { useConfirm } from "@/context/ConfirmContext";
 import { WorkoutExercise } from "@/types";
 import { Plus, Minus, Trash2 } from "lucide-react";
 
@@ -11,7 +12,8 @@ interface ExerciseCheckboxProps {
 }
 
 export function ExerciseCheckbox({ exercise, disabled = false }: ExerciseCheckboxProps) {
-  const { toggleSet, addSet, removeSet, deleteExercise } = useWorkout();
+  const { toggleSet, addSet, removeSet, deleteExercise, updateSetWeight } = useWorkout();
+  const { confirm } = useConfirm();
 
   const handleToggleSet = (setIdx: number) => {
     if (disabled || !exercise.id) return;
@@ -28,9 +30,15 @@ export function ExerciseCheckbox({ exercise, disabled = false }: ExerciseCheckbo
     removeSet(exercise.id);
   };
 
-  const handleDeleteExercise = () => {
+  const handleDeleteExercise = async () => {
     if (disabled || !exercise.id) return;
-    if (window.confirm(`Are you sure you want to remove "${exercise.exercise}" from your program?`)) {
+    const isConfirmed = await confirm({
+      title: "Remove Exercise",
+      message: `Are you sure you want to remove "${exercise.exercise}" from your program?`,
+      confirmText: "Remove",
+      variant: "danger",
+    });
+    if (isConfirmed) {
       deleteExercise(exercise.id);
     }
   };
@@ -98,28 +106,86 @@ export function ExerciseCheckbox({ exercise, disabled = false }: ExerciseCheckbo
         )}
       </div>
 
-      {/* Dynamic Set List Checkboxes */}
-      <div className="flex flex-wrap gap-2 pt-0.5">
+      {/* Dynamic Set List with Weights in kgs */}
+      <div className="flex flex-col gap-2 pt-1 border-t border-border/50 mt-1">
         {Array.from({ length: exercise.sets }).map((_, idx) => {
           const isSetChecked = exercise.completedSets ? exercise.completedSets[idx] : false;
+          const currentWeight = exercise.weights && exercise.weights[idx] !== undefined ? exercise.weights[idx] : (15 + idx * 5);
 
           return (
-            <button
-              key={idx}
-              type="button"
-              disabled={disabled}
-              onClick={() => handleToggleSet(idx)}
-              className={`flex items-center justify-center h-8 px-2.5 rounded-lg border text-xs font-medium transition-all duration-150 ${
-                disabled ? "cursor-default" : "cursor-pointer"
-              } ${
-                isSetChecked
-                  ? "bg-primary border-primary text-primary-foreground font-semibold shadow-xs"
-                  : "border-border bg-card text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground"
-              }`}
-            >
-              <span>S{idx + 1}</span>
-              {isSetChecked && <span className="ml-1 text-[9px] font-bold">✓</span>}
-            </button>
+            <div key={idx} className="flex items-center justify-between gap-3 text-xs py-0.5">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => handleToggleSet(idx)}
+                  className={`flex items-center justify-center h-6 w-6 rounded-md border transition-all duration-150 ${
+                    disabled ? "cursor-default" : "cursor-pointer"
+                  } ${
+                    isSetChecked
+                      ? "bg-primary border-primary text-primary-foreground font-semibold shadow-xs"
+                      : "border-border bg-secondary hover:border-muted-foreground/30"
+                  }`}
+                  aria-label={`Toggle set ${idx + 1}`}
+                >
+                  {isSetChecked && <span className="text-[10px] font-bold">✓</span>}
+                </button>
+                <span className={`font-medium ${isSetChecked ? "text-muted-foreground line-through opacity-70" : "text-foreground"}`}>
+                  Set {idx + 1}
+                </span>
+              </div>
+              
+              {/* Weight Input with Plus/Minus Adjusters */}
+              <div className="flex items-center gap-1">
+                {!disabled && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!exercise.id) return;
+                      const newVal = Math.max(0, currentWeight - 5);
+                      updateSetWeight(exercise.id, idx, newVal);
+                    }}
+                    className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent bg-secondary/80 border border-border rounded transition-colors cursor-pointer"
+                    aria-label="Decrease weight by 5kg"
+                  >
+                    <Minus className="h-2.5 w-2.5" />
+                  </button>
+                )}
+
+                <input
+                  type="number"
+                  min="0"
+                  step="5"
+                  disabled={disabled}
+                  value={currentWeight || ""}
+                  placeholder="0"
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    const weightVal = isNaN(val) ? 0 : val;
+                    if (!exercise.id) return;
+                    updateSetWeight(exercise.id, idx, weightVal);
+                  }}
+                  className="w-12 px-1 py-1 text-center text-xs rounded-lg border border-border bg-secondary text-foreground focus:outline-none focus:ring-1 focus:ring-ring focus:border-ring placeholder:text-muted-foreground/50 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+
+                {!disabled && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!exercise.id) return;
+                      const newVal = currentWeight + 5;
+                      updateSetWeight(exercise.id, idx, newVal);
+                    }}
+                    className="p-1 text-muted-foreground hover:text-foreground hover:bg-accent bg-secondary/80 border border-border rounded transition-colors cursor-pointer"
+                    aria-label="Increase weight by 5kg"
+                  >
+                    <Plus className="h-2.5 w-2.5" />
+                  </button>
+                )}
+
+                <span className="text-muted-foreground text-[10px] font-bold uppercase tracking-wider ml-1">kg</span>
+              </div>
+            </div>
           );
         })}
       </div>

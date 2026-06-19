@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useMemo, use } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
+import { useConfirm } from "@/context/ConfirmContext";
 import { UserProfile, WorkoutExercise } from "@/types";
 import { getUserProfile, getUserWorkouts, deleteUserProfileAndData } from "@/services/db";
 import { ProfileCard } from "@/components/ProfileCard";
@@ -21,6 +22,7 @@ interface UserProfilePageProps {
 export default function UserProfilePage({ params }: UserProfilePageProps) {
   const { id: userId } = use(params);
   const { user: currentUser } = useAuth();
+  const { confirm } = useConfirm();
   const router = useRouter();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -29,7 +31,13 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
 
   const handleDeleteUserProfile = async () => {
     if (!profile) return;
-    if (window.confirm(`Are you sure you want to permanently remove ${profile.name}'s profile and all their workout routine data?`)) {
+    const isConfirmed = await confirm({
+      title: "Remove Trainer Profile",
+      message: `Are you sure you want to permanently remove ${profile.name}'s profile and all their workout routine data?`,
+      confirmText: "Remove Profile",
+      variant: "danger",
+    });
+    if (isConfirmed) {
       try {
         await deleteUserProfileAndData(profile.uid);
         router.push("/users");
@@ -200,18 +208,21 @@ export default function UserProfilePage({ params }: UserProfilePageProps) {
               <button
                 key={day}
                 onClick={() => setSelectedDay(day)}
-                className={`snap-center flex flex-col items-center justify-center min-w-[76px] py-2 px-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all duration-150 ${isSelected
-                  ? "bg-primary border-primary text-primary-foreground font-semibold shadow-sm"
-                  : isToday
+                className={`snap-center flex flex-col items-center justify-center min-w-[76px] py-2 px-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-all duration-150 ${
+                  isDayCompleted
+                    ? isSelected
+                      ? "bg-emerald-600 border-emerald-600 text-white font-semibold shadow-sm dark:bg-emerald-500 dark:border-emerald-500 dark:text-black"
+                      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 dark:bg-emerald-500/5 hover:border-emerald-500/50"
+                    : isSelected
+                    ? "bg-primary border-primary text-primary-foreground font-semibold shadow-sm"
+                    : isToday
                     ? "bg-secondary/70 border-foreground/30 text-foreground"
-                    : isDayCompleted
-                      ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400"
-                      : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
-                  }`}
+                    : "border-border bg-card text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
+                }`}
               >
                 <span>{day.substring(0, 3)}</span>
-                {isToday && <span className="text-[9px] opacity-75 mt-0.5 font-bold">TODAY</span>}
-                {!isToday && isDayCompleted && <span className="text-[9px] opacity-75 mt-0.5">✓</span>}
+                {isToday && !isDayCompleted && <span className="text-[9px] opacity-75 mt-0.5 font-bold">TODAY</span>}
+                {isDayCompleted && <span className="text-[9px] opacity-75 mt-0.5 font-bold">✓ DONE</span>}
               </button>
             );
           })}

@@ -44,3 +44,18 @@ export const DEFAULT_WORKOUT_PLAN: DefaultExerciseTemplate[] = [
 ];
 
 export const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+export const PREDEFINED_EXERCISES: Record<string, string[]> = {
+  "Chest": ["Bench Press", "Incline Dumbbell Press", "Chest Fly", "Push Ups", "Decline Press", "Cable Crossover", "Dumbbell Pullover"],
+  "Triceps": ["Dips", "Rope Pushdown", "Skull Crushers", "Overhead Extension", "Close-Grip Bench Press", "Tricep Kickbacks"],
+  "Back": ["Pull Ups", "Bent Over Row", "Lat Pulldown", "Deadlift", "T-Bar Row", "Single-Arm Dumbbell Row", "Hyperextensions"],
+  "Biceps": ["Barbell Curl", "Hammer Curl", "Incline Dumbbell Curl", "Preacher Curl", "Concentration Curl", "Cable Curls"],
+  "Legs": ["Squats", "Leg Press", "Lying Leg Curl", "Leg Extension", "Romanian Deadlift", "Calf Raises", "Lunges"],
+  "Abs": ["Crunches", "Plank", "Leg Raises", "Russian Twists", "Ab Wheel Rollout", "Hanging Knee Raise"],
+  "Shoulders": ["Overhead Press", "Lateral Raise", "Front Raise", "Rear Delt Fly", "Arnold Press", "Shrugs"],
+  "Forearms": ["Wrist Curls", "Reverse Barbell Curl", "Wrist Rollers", "Farmer's Walk"],
+  "Calves": ["Standing Calf Raises", "Seated Calf Raises", "Donkey Calf Raises", "Calf Press"],
+  "Full Body": ["Clean and Press", "Kettlebell Swings", "Thrusters", "Burpees", "Snatch"],
+  "Cardio": ["Jump Rope", "Treadmill Run", "Elliptical", "Rowing Machine", "Stationary Bike", "Burpees"]
+};
+

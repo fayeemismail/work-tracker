@@ -7,11 +7,15 @@ import { getAllUserProfiles } from "@/services/db";
 import { Card, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Users, Search, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import { useConfirm } from "@/context/ConfirmContext";
+import { useToast } from "@/context/ToastContext";
 import { Button } from "@/components/ui/Button";
 import { cleanupStaleUsers } from "@/app/actions/admin";
 
 export default function Community() {
   const { user: currentUser } = useAuth();
+  const { confirm } = useConfirm();
+  const { success, error, info } = useToast();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -36,17 +40,26 @@ export default function Community() {
   }, [loadUsers]);
 
   const handleSyncUsers = async () => {
-    if (window.confirm("This will verify every community profile against Firebase Authentication and delete any stale profiles. Proceed?")) {
+    const isConfirmed = await confirm({
+      title: "Sync Community Profiles",
+      message: "This will verify every community profile against Firebase Authentication and delete any stale profiles. Proceed?",
+      confirmText: "Sync & Clean",
+      variant: "warning",
+    });
+    if (isConfirmed) {
       setSyncing(true);
+      info("Syncing profiles and cleaning up stale database entries...", "Process Started");
       try {
         const res = await cleanupStaleUsers();
-        alert(res.message);
         if (res.success) {
+          success(res.message, "Sync Successful");
           await loadUsers();
+        } else {
+          error(res.message, "Sync Failed");
         }
       } catch (err) {
         console.error("Failed to sync stale users:", err);
-        alert("An error occurred while cleaning up stale users.");
+        error("An error occurred while cleaning up stale users.", "System Error");
       } finally {
         setSyncing(false);
       }

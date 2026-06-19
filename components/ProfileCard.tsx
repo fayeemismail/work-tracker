@@ -55,27 +55,38 @@ export function ProfileCard({ profile }: ProfileCardProps) {
         </div>
 
         {/* Right Side: Quick Stats */}
-        <div className="grid grid-cols-2 gap-4 sm:flex sm:items-center sm:gap-6 border-t sm:border-t-0 border-border pt-4 sm:pt-0">
+        <div className="grid grid-cols-3 gap-2.5 sm:flex sm:items-center sm:gap-4 border-t sm:border-t-0 border-border pt-4 sm:pt-0 w-full sm:w-auto">
           
           {/* Streak Stat */}
-          <div className="flex flex-col items-start bg-secondary/35 border border-border/40 p-3 rounded-xl min-w-[100px]">
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium mb-1">
+          <div className="flex flex-col items-start bg-secondary/35 border border-border/40 p-2.5 rounded-xl flex-1 sm:flex-none sm:min-w-[90px]">
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-medium mb-1">
               <Flame className="h-3.5 w-3.5 text-amber-500 fill-amber-500/20 animate-pulse" />
-              Active Streak
+              Streak
             </span>
-            <span className="text-2xl font-extrabold text-foreground leading-none">
-              {profile.streak || 0} <span className="text-xs font-normal text-muted-foreground">days</span>
+            <span className="text-lg font-extrabold text-foreground leading-none">
+              {profile.streak || 0} <span className="text-[9px] font-normal text-muted-foreground">days</span>
+            </span>
+          </div>
+
+          {/* Best Streak Stat */}
+          <div className="flex flex-col items-start bg-secondary/35 border border-border/40 p-2.5 rounded-xl flex-1 sm:flex-none sm:min-w-[90px]">
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-medium mb-1">
+              <Flame className="h-3.5 w-3.5 text-orange-500 fill-orange-500/25" />
+              Best Streak
+            </span>
+            <span className="text-lg font-extrabold text-foreground leading-none">
+              {profile.bestStreak || profile.streak || 0} <span className="text-[9px] font-normal text-muted-foreground">days</span>
             </span>
           </div>
 
           {/* Exercises Completed */}
-          <div className="flex flex-col items-start bg-secondary/35 border border-border/40 p-3 rounded-xl min-w-[100px]">
-            <span className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium mb-1">
+          <div className="flex flex-col items-start bg-secondary/35 border border-border/40 p-2.5 rounded-xl flex-1 sm:flex-none sm:min-w-[90px]">
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-medium mb-1">
               <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
-              Total Finished
+              Finished
             </span>
-            <span className="text-2xl font-extrabold text-foreground leading-none">
-              {profile.completedCount || 0} <span className="text-xs font-normal text-muted-foreground">reps</span>
+            <span className="text-lg font-extrabold text-foreground leading-none">
+              {profile.completedCount || 0} <span className="text-[9px] font-normal text-muted-foreground">reps</span>
             </span>
           </div>
 

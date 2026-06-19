@@ -2,25 +2,33 @@
 
 import React, { createContext, useContext, useEffect, useState, useMemo } from "react";
 import { useAuth } from "./AuthContext";
-import { WorkoutExercise } from "@/types";
+import { WorkoutExercise, WorkoutHistoryLog } from "@/types";
 import {
   getUserWorkouts,
   updateWorkoutSets,
   updateUserStreak,
   addCustomWorkoutExercise,
   deleteWorkoutExercise,
+  logWorkoutHistory,
+  getUserWorkoutHistory,
+  cleanOldHistoryLogs,
+  deleteMuscleGroupExercises,
 } from "@/services/db";
 
 interface WorkoutContextType {
   workouts: WorkoutExercise[];
+  history: WorkoutHistoryLog[];
   loading: boolean;
   toggleExercise: (exerciseId: string) => Promise<void>;
   toggleSet: (exerciseId: string, setIndex: number) => Promise<void>;
   addSet: (exerciseId: string) => Promise<void>;
   removeSet: (exerciseId: string) => Promise<void>;
+  updateSetWeight: (exerciseId: string, setIndex: number, weight: number) => Promise<void>;
   addCustomExercise: (day: string, muscle: string, exerciseName: string, sets: number) => Promise<void>;
   deleteExercise: (exerciseId: string) => Promise<void>;
+  deleteMuscleGroup: (day: string, muscle: string) => Promise<void>;
   refreshWorkouts: () => Promise<void>;
+  refreshHistory: () => Promise<void>;
   todayWorkout: WorkoutExercise[];
   todayCompletedCount: number;
   todayTotalCount: number;
@@ -35,6 +43,7 @@ const WorkoutContext = createContext<WorkoutContextType | undefined>(undefined);
 export function WorkoutProvider({ children }: { children: React.ReactNode }) {
   const { user, profile, refreshProfile } = useAuth();
   const [workouts, setWorkouts] = useState<WorkoutExercise[]>([]);
+  const [history, setHistory] = useState<WorkoutHistoryLog[]>([]);
   const [loading, setLoading] = useState(false);
 
   const refreshWorkouts = React.useCallback(async () => {
@@ -53,14 +62,33 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Fetch workouts whenever the user logs in
+  const refreshHistory = React.useCallback(async () => {
+    if (!user) {
+      setTimeout(() => setHistory([]), 0);
+      return;
+    }
+    try {
+      const data = await getUserWorkoutHistory(user.uid);
+      setTimeout(() => setHistory(data), 0);
+    } catch (err) {
+      console.error("Error loading history:", err);
+    }
+  }, [user]);
+
+  // Fetch workouts & history whenever the user logs in, and clean old history
   useEffect(() => {
     if (user) {
       refreshWorkouts();
+      cleanOldHistoryLogs(user.uid).then(() => {
+        refreshHistory();
+      });
     } else {
-      setTimeout(() => setWorkouts([]), 0);
+      setTimeout(() => {
+        setWorkouts([]);
+        setHistory([]);
+      }, 0);
     }
-  }, [user, refreshWorkouts]);
+  }, [user, refreshWorkouts, refreshHistory]);
 
   // Determine current day of week
   const todayName = useMemo(() => {
@@ -140,6 +168,7 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     const exercise = workouts[exerciseIndex];
     const newCompleted = !exercise.completed;
     const newSetsList = new Array(exercise.sets).fill(newCompleted);
+    const currentWeights = exercise.weights || Array.from({ length: exercise.sets }).map((_, sIdx) => 15 + sIdx * 5);
 
     // Optimistic Update
     const updated = [...workouts];
@@ -147,13 +176,16 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
       ...exercise,
       completed: newCompleted,
       completedSets: newSetsList,
+      weights: currentWeights,
       updatedAt: new Date().toISOString(),
     };
     setWorkouts(updated);
 
     try {
-      await updateWorkoutSets(user.uid, exerciseId, newSetsList, exercise.sets);
+      await updateWorkoutSets(user.uid, exerciseId, newSetsList, exercise.sets, currentWeights);
+      await logWorkoutHistory(user.uid, exercise, newSetsList, exercise.sets, currentWeights);
       await refreshProfile();
+      await refreshHistory();
     } catch (err) {
       console.error(err);
       refreshWorkouts();
@@ -171,6 +203,7 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     const updatedSetsList = [...(exercise.completedSets || new Array(exercise.sets).fill(false))];
     updatedSetsList[setIndex] = !updatedSetsList[setIndex];
     const newCompleted = updatedSetsList.length > 0 && updatedSetsList.every((s) => s === true);
+    const currentWeights = exercise.weights || Array.from({ length: exercise.sets }).map((_, sIdx) => 15 + sIdx * 5);
 
     // 1. Optimistic Update
     const updatedWorkouts = [...workouts];
@@ -178,14 +211,17 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
       ...exercise,
       completedSets: updatedSetsList,
       completed: newCompleted,
+      weights: currentWeights,
       updatedAt: new Date().toISOString(),
     };
     setWorkouts(updatedWorkouts);
 
     // 2. Sync to database
     try {
-      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, exercise.sets);
+      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, exercise.sets, currentWeights);
+      await logWorkoutHistory(user.uid, exercise, updatedSetsList, exercise.sets, currentWeights);
       await refreshProfile();
+      await refreshHistory();
     } catch (err) {
       console.error("Failed to toggle set checklist:", err);
       refreshWorkouts();
@@ -195,37 +231,37 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
   // Add a set to an exercise
   const addSet = async (exerciseId: string) => {
     if (!user) return;
-
     const exerciseIndex = workouts.findIndex((w) => w.id === exerciseId);
     if (exerciseIndex === -1) return;
-
     const exercise = workouts[exerciseIndex];
     const updatedSetsList = [...(exercise.completedSets || new Array(exercise.sets).fill(false)), false];
+    const currentWeights = exercise.weights || Array.from({ length: exercise.sets }).map((_, sIdx) => 15 + sIdx * 5);
+    const lastWeight = currentWeights.length > 0 ? currentWeights[currentWeights.length - 1] : 10;
+    const updatedWeights = [...currentWeights, lastWeight + 5];
     const newSetsCount = exercise.sets + 1;
     const newCompleted = false;
 
-    // 1. Optimistic Update
     const updatedWorkouts = [...workouts];
     updatedWorkouts[exerciseIndex] = {
       ...exercise,
       sets: newSetsCount,
       completedSets: updatedSetsList,
+      weights: updatedWeights,
       completed: newCompleted,
       updatedAt: new Date().toISOString(),
     };
     setWorkouts(updatedWorkouts);
 
-    // 2. Sync to database
     try {
-      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, newSetsCount);
+      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, newSetsCount, updatedWeights);
+      await logWorkoutHistory(user.uid, exercise, updatedSetsList, newSetsCount, updatedWeights);
       await refreshProfile();
+      await refreshHistory();
     } catch (err) {
       console.error("Failed to add set:", err);
       refreshWorkouts();
     }
   };
-
-  // Remove a set from an exercise
   const removeSet = async (exerciseId: string) => {
     if (!user) return;
 
@@ -237,6 +273,8 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
 
     const updatedSetsList = [...(exercise.completedSets || new Array(exercise.sets).fill(false))];
     updatedSetsList.pop();
+    const updatedWeights = [...(exercise.weights || Array.from({ length: exercise.sets }).map((_, sIdx) => 15 + sIdx * 5))];
+    updatedWeights.pop();
     const newSetsCount = exercise.sets - 1;
     const newCompleted = updatedSetsList.length > 0 && updatedSetsList.every((s) => s === true);
 
@@ -246,6 +284,7 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
       ...exercise,
       sets: newSetsCount,
       completedSets: updatedSetsList,
+      weights: updatedWeights,
       completed: newCompleted,
       updatedAt: new Date().toISOString(),
     };
@@ -253,10 +292,44 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
 
     // 2. Sync to database
     try {
-      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, newSetsCount);
+      await updateWorkoutSets(user.uid, exerciseId, updatedSetsList, newSetsCount, updatedWeights);
+      await logWorkoutHistory(user.uid, exercise, updatedSetsList, newSetsCount, updatedWeights);
       await refreshProfile();
+      await refreshHistory();
     } catch (err) {
       console.error("Failed to remove set:", err);
+      refreshWorkouts();
+    }
+  };
+
+  // Update set weight
+  const updateSetWeight = async (exerciseId: string, setIndex: number, weight: number) => {
+    if (!user) return;
+
+    const exerciseIndex = workouts.findIndex((w) => w.id === exerciseId);
+    if (exerciseIndex === -1) return;
+
+    const exercise = workouts[exerciseIndex];
+    const updatedWeights = [...(exercise.weights || Array.from({ length: exercise.sets }).map((_, sIdx) => 15 + sIdx * 5))];
+    updatedWeights[setIndex] = weight;
+
+    // 1. Optimistic Update
+    const updatedWorkouts = [...workouts];
+    updatedWorkouts[exerciseIndex] = {
+      ...exercise,
+      weights: updatedWeights,
+      updatedAt: new Date().toISOString(),
+    };
+    setWorkouts(updatedWorkouts);
+
+    // 2. Sync to database
+    try {
+      const completedSets = exercise.completedSets || new Array(exercise.sets).fill(false);
+      await updateWorkoutSets(user.uid, exerciseId, completedSets, exercise.sets, updatedWeights);
+      await logWorkoutHistory(user.uid, exercise, completedSets, exercise.sets, updatedWeights);
+      await refreshHistory();
+    } catch (err) {
+      console.error("Failed to update set weight:", err);
       refreshWorkouts();
     }
   };
@@ -293,18 +366,38 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Delete an entire muscle group category on a day
+  const deleteMuscleGroup = async (day: string, muscle: string) => {
+    if (!user) return;
+
+    setTimeout(() => setLoading(true), 0);
+    try {
+      await deleteMuscleGroupExercises(user.uid, day, muscle);
+      setWorkouts((prev) => prev.filter((w) => !(w.day === day && w.muscle === muscle)));
+      await refreshProfile();
+    } catch (err) {
+      console.error("Failed to delete muscle group category:", err);
+    } finally {
+      setTimeout(() => setLoading(false), 0);
+    }
+  };
+
   return (
     <WorkoutContext.Provider
       value={{
         workouts,
+        history,
         loading,
         toggleExercise,
         toggleSet,
         addSet,
         removeSet,
+        updateSetWeight,
         addCustomExercise,
         deleteExercise,
+        deleteMuscleGroup,
         refreshWorkouts,
+        refreshHistory,
         todayWorkout,
         todayCompletedCount,
         todayTotalCount,
