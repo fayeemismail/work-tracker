@@ -8,6 +8,7 @@ import {
   signOut,
   updateProfile,
   signInWithPopup,
+  signInWithRedirect,
   GoogleAuthProvider,
   deleteUser,
   User,
@@ -79,7 +80,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(currentUser);
       if (currentUser) {
         try {
-          const userProf = await getUserProfile(currentUser.uid);
+          let userProf = await getUserProfile(currentUser.uid);
+          
+          // Auto-create user profile if it doesn't exist yet (e.g. after Google Auth redirect login)
+          if (!userProf) {
+            const prevDemoUid = getPrevDemoUid();
+            userProf = await createUserProfile(
+              currentUser.uid,
+              currentUser.displayName || "Trainer",
+              currentUser.email || "user@example.com",
+              prevDemoUid || undefined
+            );
+            if (prevDemoUid) {
+              localStorage.removeItem("pulse_demo_logged_in_uid");
+            }
+          } else {
+            // Check if there is guest data to migrate
+            const prevDemoUid = getPrevDemoUid();
+            if (prevDemoUid) {
+              await migrateLocalDataToFirebase(prevDemoUid, currentUser.uid);
+              localStorage.removeItem("pulse_demo_logged_in_uid");
+              // Reload profile to get updated statistics
+              userProf = await getUserProfile(currentUser.uid);
+            }
+          }
           setProfile(userProf);
         } catch (err) {
           console.error("Error loading user profile:", err);
@@ -227,6 +251,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const prevDemoUid = getPrevDemoUid();
 
     const provider = new GoogleAuthProvider();
+    
+    // Detect mobile viewport or user agent to bypass popup blocking
+    const isMobile = typeof window !== "undefined" && (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      window.innerWidth < 768
+    );
+
+    if (isMobile) {
+      // In mobile viewports, popups are frequently blocked by default. Use redirect instead.
+      await signInWithRedirect(auth, provider);
+      return;
+    }
+
     const result = await signInWithPopup(auth, provider);
     const fireUser = result.user;
 
