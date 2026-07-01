@@ -164,34 +164,71 @@ export function WorkoutProvider({ children }: { children: React.ReactNode }) {
   // Calculate Streak
   const streak = useMemo(() => {
     if (workouts.length === 0) return 0;
+
+    const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     
-    const daysOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const dayCompleted: Record<string, boolean> = {};
-
-    daysOrder.forEach((d) => {
-      const dayWorkouts = workouts.filter((w) => w.day === d);
-      dayCompleted[d] = dayWorkouts.length > 0 && dayWorkouts.every((w) => w.completed);
-    });
-
-    let todayIdx = daysOrder.indexOf(todayName);
-    if (todayIdx === -1) { // Sunday (Rest day)
-      todayIdx = 5; // Saturday
-    }
+    // Helper to format Date to YYYY-MM-DD local string
+    const formatDate = (d: Date) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const date = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${date}`;
+    };
 
     let activeStreak = 0;
-    for (let i = todayIdx; i >= 0; i--) {
-      const d = daysOrder[i];
-      if (dayCompleted[d]) {
+    const maxDaysToCheck = 30; // Limit checking to 30 days back since history is cleared after 30 days
+    
+    for (let dayOffset = 0; dayOffset < maxDaysToCheck; dayOffset++) {
+      const checkDate = new Date();
+      checkDate.setDate(checkDate.getDate() - dayOffset);
+      
+      const dateStr = formatDate(checkDate);
+      const dayOfWeekName = daysOfWeek[checkDate.getDay()];
+      
+      // Get workouts scheduled for this day of the week
+      const scheduledForDay = workouts.filter(w => w.day === dayOfWeekName);
+      
+      // Sunday is a rest/leave day, and any weekday with no workouts scheduled is a rest day
+      const isRestDay = dayOfWeekName === "Sunday" || scheduledForDay.length === 0;
+      
+      if (isRestDay) {
+        // Rest days do not break the streak, we just skip them
+        continue;
+      }
+      
+      // Determine completion status for this day
+      let isDayCompleted = false;
+      
+      if (dayOffset === 0) {
+        // For today, check the current real-time state in the workouts array
+        isDayCompleted = scheduledForDay.length > 0 && scheduledForDay.every(w => w.completed);
+      } else {
+        // For past days, check the history logs
+        const logsForDate = history.filter(h => h.date === dateStr);
+        isDayCompleted = scheduledForDay.every(scheduledEx => {
+          return logsForDate.some(log => 
+            log.exercise === scheduledEx.exercise && 
+            log.muscle === scheduledEx.muscle && 
+            log.completed
+          );
+        });
+      }
+      
+      if (isDayCompleted) {
         activeStreak++;
       } else {
-        if (i === todayIdx) {
+        if (dayOffset === 0) {
+          // If today's workouts are not completed yet, it doesn't break the streak
+          // because the user has the rest of today to complete them.
           continue;
         }
+        // A past workout day that is incomplete breaks the streak.
         break;
       }
     }
+    
     return activeStreak;
-  }, [workouts, todayName]);
+  }, [workouts, todayName, history]);
 
   // Sync calculated streak, completedCount, totalWorkouts, and weeklyProgress to the DB/User Profile
   useEffect(() => {

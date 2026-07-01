@@ -67,6 +67,24 @@ function saveLocalUsers(users: UserProfile[]) {
   }
 }
 
+function isFromPreviousWeek(updatedAtStr: string): boolean {
+  if (!updatedAtStr) return false;
+  
+  const updatedDate = new Date(updatedAtStr);
+  const currentDate = new Date();
+  
+  const getStartOfWeek = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    const start = new Date(d.setDate(diff));
+    start.setHours(0, 0, 0, 0);
+    return start.getTime();
+  };
+  
+  return getStartOfWeek(updatedDate) < getStartOfWeek(currentDate);
+}
+
 function getLocalWorkouts(userId: string): WorkoutExercise[] {
   if (typeof window === "undefined") return [];
   const stored = localStorage.getItem(`pulse_workouts_${userId}`);
@@ -88,11 +106,34 @@ function getLocalWorkouts(userId: string): WorkoutExercise[] {
     return initialWorkouts;
   }
   const parsed = JSON.parse(stored) as WorkoutExercise[];
-  return parsed.map((w) => ({
+  const workouts = parsed.map((w) => ({
     ...w,
     completedSets: w.completedSets || new Array(w.sets).fill(false),
     weights: w.weights || Array.from({ length: w.sets }).map((_, sIdx) => 15 + sIdx * 5),
   }));
+
+  // Check for weekly reset
+  let needsReset = false;
+  for (const w of workouts) {
+    if (w.updatedAt && isFromPreviousWeek(w.updatedAt)) {
+      needsReset = true;
+      break;
+    }
+  }
+
+  if (needsReset) {
+    const nowStr = new Date().toISOString();
+    const resetWorkouts = workouts.map((w) => ({
+      ...w,
+      completed: false,
+      completedSets: new Array(w.sets).fill(false),
+      updatedAt: nowStr,
+    }));
+    localStorage.setItem(`pulse_workouts_${userId}`, JSON.stringify(resetWorkouts));
+    return resetWorkouts;
+  }
+
+  return workouts;
 }
 
 function saveLocalWorkouts(userId: string, workouts: WorkoutExercise[]) {
@@ -230,6 +271,40 @@ export async function getUserWorkouts(userId: string): Promise<WorkoutExercise[]
     await initializeUserWorkouts(userId);
     return getUserWorkouts(userId);
   }
+
+  // Check for weekly reset
+  let needsReset = false;
+  for (const w of workouts) {
+    if (w.updatedAt && isFromPreviousWeek(w.updatedAt)) {
+      needsReset = true;
+      break;
+    }
+  }
+
+  if (needsReset) {
+    const nowStr = new Date().toISOString();
+    const batch = writeBatch(db);
+    const resetWorkouts = workouts.map((w) => {
+      const resetW = {
+        ...w,
+        completed: false,
+        completedSets: new Array(w.sets).fill(false),
+        updatedAt: nowStr,
+      };
+      if (w.id) {
+        const docRef = doc(db, "workouts", w.id);
+        batch.update(docRef, {
+          completed: false,
+          completedSets: resetW.completedSets,
+          updatedAt: nowStr,
+        });
+      }
+      return resetW;
+    });
+    await batch.commit();
+    return resetWorkouts;
+  }
+
   return workouts;
 }
 
